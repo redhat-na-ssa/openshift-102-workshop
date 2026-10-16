@@ -131,7 +131,7 @@ ifndef::openshift-102-showroom[]
 When this workshop runs as part of OpenShift 102, attendees can use its tools pod instead of installing the CLIs locally.
 endif::[]
 According to Module 4, the tools pod has `skopeo` installed, and `docker` there is a shim over `skopeo` that supports `docker manifest inspect`; it has *no container engine*, so it cannot start the local registry, and attendees must push to a registry reachable from the pod instead.
-Whether `gpg` and `jq` are present in the tools pod is not stated in this content; check with the commands in the <<_verification_checklist,Verification Checklist>>.
+The tools pod also has `jq` and `gpg`; check with the commands in the <<_verification_checklist,Verification Checklist>>.
 
 == Network and Image Access
 
