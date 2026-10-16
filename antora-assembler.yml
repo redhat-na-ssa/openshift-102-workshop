@@ -8,5 +8,11 @@ assembly:
   attributes:
     source-highlighter: rouge
     outlinelevels: 3
+    # The PDF is built from the openshift-102 component, so the bundled workshops' own
+    # attributes don't apply; repeat the ones their pages use. Keep these in step with
+    # workshops/istio-workshop/antora.yml.
+    istio_version: "1.30"
+    ossm_version: "3.4"
+    istio_revision: default
 build:
-  command: bundle exec asciidoctor-pdf
+  command: bundle exec asciidoctor-pdf -r ../workshop-common/pdf/workshop-pdf.rb
