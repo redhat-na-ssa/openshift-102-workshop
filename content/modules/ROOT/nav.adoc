@@ -1,5 +1,6 @@
 * xref:index.adoc[Workshop home]
 * xref:instructor.adoc[Workshop instructor]
+** xref:downloads.adoc[Downloads]
 ** xref:helm:setup-requirements.adoc[Helm Workshop]
 ** xref:deploy:setup-requirements.adoc[Advanced Deployment Workshop]
 ** xref:istio:setup-requirements.adoc[Istio Service Mesh Workshop]
