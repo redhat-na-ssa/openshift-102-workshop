@@ -39,11 +39,11 @@ The Istio and Service Mesh versions its pages show are attributes in both `conte
 Each workshop's own `antora.yml` is used only when it is built alone; in the full site, `content/antora.yml` supplies the title, navigation and attributes, so an attribute a workshop needs goes in both.
 The workshop pages link to the Shared CLI tools page and include its snippet only when the `openshift-102-showroom` attribute is set, which only `content/antora.yml` does, so each workshop still builds alone.
 
-The site's look (theme, CSS, tabs, copy buttons, footer), the PDF look, the release (images, Helm chart and offline bundle) and the Pages, Release and Check content workflows come from https://github.com/shpwrck/workshop-common[workshop-common], which the other workshop repos share; change them there.
+The site's look (theme, CSS, tabs, copy buttons, footer), the PDF look, the release (images, Helm chart and offline bundle) and the Pages, Release and Check content workflows come from https://github.com/redhat-na-ssa/workshop-common[workshop-common], which the other workshop repos share; change them there.
 
 == Preview
 
-Clone https://github.com/shpwrck/workshop-common[workshop-common] next to this repository, and run this from this repository's folder to preview the whole site:
+Clone https://github.com/redhat-na-ssa/workshop-common[workshop-common] next to this repository, and run this from this repository's folder to preview the whole site:
 
 [source,bash]
 ----
@@ -93,6 +93,6 @@ Then write its pages, its setup requirements, and its row on the instructor page
 == Releases
 
 Run the *Release* workflow from the Actions tab with the next version, such as `v1.1.0`, or push a tag of that name.
-It publishes the PDF, the runtime and tools images, the Helm chart and an offline bundle; see "Releases" in https://github.com/shpwrck/workshop-common[workshop-common]'s README.
+It publishes the PDF, the runtime and tools images, the Helm chart and an offline bundle; see "Releases" in https://github.com/redhat-na-ssa/workshop-common[workshop-common]'s README.
 To ship another file with every release, put it in `downloads/`.
 The tools image adds `istioctl` (`tools/install.sh`) to the shared tools; keep its `ISTIO_VERSION` on the Istio release the pages target, `istio_version` in `content/antora.yml`.
