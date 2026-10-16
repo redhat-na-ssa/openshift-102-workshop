@@ -1,13 +1,6 @@
-# Keep build context small; Antora only needs playbook + content + workshops.
-# NOTE: Do not exclude .git — Antora requires a git worktree for url: . sources.
-.github
+# Keep the tools image build context small.
 www
 .cache
-vendor/bundle
 node_modules
-build
-**/.DS_Store
-*.log
-*.tmp
-.env
-.env.*
+vendor
+.bundle

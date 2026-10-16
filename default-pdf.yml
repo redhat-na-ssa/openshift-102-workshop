@@ -1,9 +1,8 @@
 ---
-# Release-only: same content as default-site.yml plus @antora/pdf-extension.
-# Produces one PDF with the hub pages and all the workshops, in nav order, under
-# www-pdf-exports/_exports/ (see antora-assembler.yml).
-# Used by .github/workflows/release-offline.yml and test-pdf-build.yml.
-# Not used by Dockerfile.runtime (keeps the runtime image free of Asciidoctor/PDF build artifacts).
+# Same content as default-site.yml plus @antora/pdf-extension: one PDF with the hub pages
+# and all the workshops, in nav order, under www-pdf-exports/_exports/ (see
+# antora-assembler.yml). The Release workflow (workshop-common's release.yml) and Test PDF
+# Build use it, and both require exactly one PDF, so keep it to one.
 site:
   title: OpenShift 102 Workshop
   url: "https://example.com"
@@ -16,7 +15,7 @@ asciidoc:
     # page omits its copy of the shared CLI tools snippet and the PDF shows it once, on the
     # hub's Shared CLI tools page.
     openshift-102-showroom: ~
-    tools-image-basename: ghcr.io/redhat-na-ssa/openshift-102-tools
+    tools-image-basename: ghcr.io/redhat-na-ssa/openshift-102-workshop-tools
     tools-image-tag: latest
 
 content:

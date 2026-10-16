@@ -8,8 +8,9 @@ site:
 
 asciidoc:
   attributes:
-    # Workshop tools image (Dockerfile.tools); override when building for another registry or tag.
-    tools-image-basename: ghcr.io/redhat-na-ssa/openshift-102-tools
+    # The release's tools image (the Shared CLI tools page shows it); the Release workflow
+    # passes the released name and tag, so override these only for another registry or tag.
+    tools-image-basename: ghcr.io/redhat-na-ssa/openshift-102-workshop-tools
     tools-image-tag: latest
 
 content:

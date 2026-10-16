@@ -32,14 +32,14 @@ The Istio and Service Mesh versions its pages show are attributes in both `conte
 |`workshops/prometheus/`
 |The Prometheus Query Workshop: its pages in `modules/prometheus/pages`, and its navigation in `modules/prometheus/nav.adoc`.
 
-|`deploy/`, `Dockerfile.runtime`, `Dockerfile.tools`, `image-tools/`, `scripts/`
-|The disconnected release: the runtime and CLI tools images, the Helm chart that deploys the site on OpenShift, and their scripts.
+|`tools/`
+|`install.sh` adds `istioctl` to the release's tools image, and `extra-tools` lists it so the image's banner and check include it.
 |===
 
 Each workshop's own `antora.yml` is used only when it is built alone; in the full site, `content/antora.yml` supplies the title, navigation and attributes, so an attribute a workshop needs goes in both.
 The workshop pages link to the Shared CLI tools page and include its snippet only when the `openshift-102-showroom` attribute is set, which only `content/antora.yml` does, so each workshop still builds alone.
 
-The site's look (theme, CSS, tabs, copy buttons, footer), the PDF look and the Pages and Check content workflows come from https://github.com/shpwrck/workshop-common[workshop-common], which the other workshop repos share; change them there.
+The site's look (theme, CSS, tabs, copy buttons, footer), the PDF look, the release (images, Helm chart and offline bundle) and the Pages, Release and Check content workflows come from https://github.com/shpwrck/workshop-common[workshop-common], which the other workshop repos share; change them there.
 
 == Preview
 
@@ -69,7 +69,7 @@ Point them at your registry when building disconnected documentation, for exampl
 ----
 antora generate default-site.yml \
   --stacktrace \
-  --attribute tools-image-basename=ghcr.io/myorg/openshift-102-tools \
+  --attribute tools-image-basename=ghcr.io/myorg/openshift-102-workshop-tools \
   --attribute tools-image-tag=v1.0.4
 ----
 
@@ -92,68 +92,6 @@ Then write its pages, its setup requirements, and its row on the instructor page
 
 == Releases
 
-Push a SemVer tag `v*` (for example `v1.0.4`) or run the *Release disconnected OpenShift bundle* workflow from the Actions tab; see <<disconnected-openshift-air-gap>> for what it publishes.
-
-== Workshop CLI tools image
-
-Releases also publish **`ghcr.io/<owner>/openshift-102-tools:<tag>`** (`Dockerfile.tools`): a UBI-based image learners run **on the cluster** so everyone shares the same CLIs without local installs. Most users paste **`deploy/openshift-102-tools-deployment.yaml`** (also in the offline tarball) into the OpenShift console **Import YAML** flow—no local `oc` required.
-
-Included in that image:
-
-* `oc` and `kubectl` (OpenShift stable client mirror)
-* `helm` (pinned release) and `istioctl` (aligned with the Istio 1.23 workshop)
-* `curl`, `wget`, `jq`, `git`, GnuPG (`gnupg2`), `skopeo`
-* `/usr/local/bin/docker` — a **shim** only (no Docker Engine): `manifest inspect` uses `skopeo inspect --raw`; `pull` / `image inspect` / `history` use `skopeo` (and `jq` where needed)
-* The **showroom Helm chart** tree at **`~/chart`** (symlink to `/usr/local/share/openshift-102/helm/openshift-102-workshop`), baked in at image build time so you can run **`helm upgrade --install … ~/chart`** from inside the pod without cloning this repo (see `deploy/TOOLS.md`; use **`--set tools.enabled=false`** when installing from this pod to avoid a nested tools `Deployment`).
-
-Smoke checks: `bash scripts/verify-tools-image.sh IMAGE:TAG` (also run in CI on release). Offline layout and mirroring notes: `deploy/TOOLS.md`.
-
-Interactive `bash` (for example from the pod **Terminal** tab after running `bash` or `bash -l`) sources `~/.bashrc`, which prints a one-time reminder of the bundled tools for this image.
-
-== GitHub Pages
-
-The workflow in `.github/workflows/gh-pages.yml` runs the shared Pages workflow from https://github.com/shpwrck/workshop-common[workshop-common], which publishes the `www/` output from `antora generate default-site.yml` and stamps the page footer with the release, commit, shared setup version and build time.
-It builds the site for the URL GitHub Pages reports, so it works at `https://<owner>.github.io/<repo>/` or on a custom domain.
-
-Each run also packages the Helm chart under **`helm/`** on the same site and writes **`helm/index.yaml`**, so GitHub Pages doubles as a **live Helm chart repository** (no OCI needed for `helm repo add`).
-
-One-time: turn Pages on for this repository and choose **GitHub Actions** as the build source.
-
-* In the GitHub UI: **Settings** → **Pages** → **Build and deployment** → **Source** → **GitHub Actions**.
-* Or from a machine with the https://cli.github.com/[`gh`] CLI: `gh auth login` then `./scripts/enable-github-pages.sh` (see `scripts/enable-github-pages.sh --help`).
-
-=== Allow `github-pages` deployments from release tags
-
-This workflow deploys on **`main`** and on **`v*`** tags so the Helm chart version can match a release (for example **`1.0.7`** for tag **`v1.0.7`**). GitHub attaches deployments to the **`github-pages`** https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment[environment], which can restrict which git refs may deploy.
-
-If a tag run fails with *Tag "v…" is not allowed to deploy to github-pages due to environment protection rules*:
-
-. Open **Settings** → **Environments** → **github-pages**.
-. Under **Deployment branches and tags**, choose **Selected branches and tags**, click **Add deployment branch or tag rule**, set **Ref type** to **Tag** and the name pattern to `v*` (or choose **No restriction** if that matches your security model).
-. Re-run the failed **Publish to GitHub Pages** workflow from the **Actions** tab (**Re-run all jobs**), or push a new commit or tag after saving the environment.
-
-With Pages enabled for your fork, replace `OWNER` and `REPO` with your GitHub `owner` and repository name (lowercase in the URL):
-
-[source,bash]
-----
-helm repo add openshift-102-ghpages https://OWNER.github.io/REPO/helm
-helm repo update
-helm search repo openshift-102-ghpages
-helm install my-workshop openshift-102-ghpages/openshift-102-workshop \
-  --set image.tag=latest \
-  --set image.repository=ghcr.io/OWNER/openshift-102 \
-  --set tools.image.repository=ghcr.io/OWNER/openshift-102-tools
-----
-
-The chart defaults **`tools.enabled`** to **true**, which starts a second **Deployment** named like **`RELEASE-openshift-102-workshop-tools`** (Helm release name prefix) using **`ghcr.io/OWNER/openshift-102-tools`** with the same tag logic as the showroom image. Disable with **`--set tools.enabled=false`** if you only want the static site.
-
-The chart **version** follows the Git **release tag** when the workflow runs on a **`v*`** tag (for example tag `v1.0.6` yields chart version **`1.0.6`**). Builds on **`main`** between releases use the SemVer from the latest **`v*`** tag reachable from that commit plus **`+ci.<run number>`** (for example **`1.0.6+ci.4821`**) so each Pages deploy gets a distinct chart while staying aligned with the last release line. Set `image.repository` / `image.tag` to your GHCR showroom image (often the same `v*` as the chart when you cut a release).
-
-[#disconnected-openshift-air-gap]
-== Disconnected OpenShift (air-gap)
-
-* **Helm chart:** `deploy/helm/openshift-102-workshop` — deploys the pre-built static site (UBI httpd runtime, see `Dockerfile.runtime`) and, by default, a **CLI tools** `Deployment` (`tools.enabled`, `Dockerfile.tools`) in the same namespace so learners can use **Terminal** / `oc exec` and run **Helm** from the pod (subject to ServiceAccount RBAC).
-* **SBOM:** CycloneDX JSON is produced in CI for the pushed runtime image (see `.github/workflows/release-offline.yml`).
-* **Release:** Push a SemVer tag `v*` (for example `v1.0.4`) or run the **Release disconnected OpenShift bundle** workflow manually. Each release publishes the Helm package, an offline tarball (`www/` + chart + `DISCONNECTED.md` + `TOOLS.md` + `openshift-102-tools-deployment.yaml` + `images-mirror.txt`), CycloneDX SBOMs for the **showroom** and **CLI tools** images, a single PDF of the hub pages and all four workshops (`openshift-102-workshops-<tag>.pdf`, built from `default-pdf.yml`; the **Test PDF Build** workflow builds it without releasing), and pushes `ghcr.io/<owner>/openshift-102:<tag>` and `ghcr.io/<owner>/openshift-102-tools:<tag>`.
-
-Details: `deploy/DISCONNECTED.md`, `deploy/TOOLS.md`.
+Run the *Release* workflow from the Actions tab with the next version, such as `v1.1.0`, or push a tag of that name.
+It publishes the PDF, the runtime and tools images, the Helm chart and an offline bundle; see "Releases" in https://github.com/shpwrck/workshop-common[workshop-common]'s README.
+The tools image adds `istioctl` (`tools/install.sh`) to the shared tools; keep its `ISTIO_VERSION` on the Istio release the pages target, `istio_version` in `content/antora.yml`.

@@ -20,3 +20,9 @@ secrets.json
 *.core
 package-lock.json
 yarn.lock
+
+# Release builds and local previews
+.offline-chart/
+.preview-playbook.yml
+.standalone-*.yml
+.workshop-common/
