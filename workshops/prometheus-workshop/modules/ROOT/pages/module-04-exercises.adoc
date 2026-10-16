@@ -1,0 +1,369 @@
+= Exercises
+:hardbreaks-option:
+
+== Exercise 1: Rate Functions
+
+Practice using rate functions to calculate per-second rates from counter metrics.
+
+=== Step 1: Basic Rate Calculation
+
+If you have HTTP request metrics, calculate the request rate:
+
+[source,promql]
+----
+rate(http_requests_total[5m])
+----
+
+If you don't have HTTP metrics, use a counter metric available in your cluster. You can list the metric names that have series in your project through the Thanos Querier tenancy port, from the `api-client` pod described in xref:module-01-content.adoc#_querying_your_project_as_a_project_user[Module 1]:
+
+[source,bash]
+----
+NS=$(oc project -q)
+TOKEN=$(oc whoami -t)
+oc exec -n "$NS" api-client -- curl -sk -G \
+  -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode "namespace=$NS" \
+  https://thanos-querier.openshift-monitoring.svc:9092/api/v1/label/__name__/values
+----
+
+Cluster administrators can list the metric names of all namespaces through the `prometheus-k8s` route instead:
+
+[source,bash]
+----
+curl -H "Authorization: Bearer $(oc whoami -t)" \
+  "https://prometheus-k8s-openshift-monitoring.apps.<cluster-domain>/api/v1/label/__name__/values"
+----
+
+=== Step 2: Rate with Aggregation
+
+Calculate the total request rate per service:
+
+[source,promql]
+----
+sum(rate(http_requests_total[5m])) by (service)
+----
+
+=== Step 3: Compare rate() and irate()
+
+Compare the results of `rate()` and `irate()`:
+
+[source,promql]
+----
+# Average rate
+rate(http_requests_total[5m])
+
+# Instant rate
+irate(http_requests_total[5m])
+----
+
+Observe the differences. When would you use each?
+
+== Exercise 2: Gauge Functions
+
+Practice using functions designed for gauge metrics.
+
+=== Step 1: Average Over Time
+
+Calculate the average memory usage over the last 5 minutes:
+
+[source,promql]
+----
+avg_over_time(container_memory_usage_bytes[5m])
+----
+
+=== Step 2: Maximum Over Time
+
+Find the maximum memory usage over the last hour:
+
+[source,promql]
+----
+max_over_time(container_memory_usage_bytes[1h])
+----
+
+Compare this with the current value. What does this tell you?
+
+=== Step 3: Delta Function
+
+Calculate the change in memory usage over 5 minutes:
+
+[source,promql]
+----
+delta(container_memory_usage_bytes[5m])
+----
+
+Positive values indicate memory increase, negative values indicate decrease.
+
+== Exercise 3: Subqueries
+
+Practice writing subqueries for time-based analysis.
+
+=== Step 1: Basic Subquery
+
+Calculate the average 5-minute rate over the last hour, evaluated every minute:
+
+[source,promql]
+----
+avg_over_time(rate(http_requests_total[5m])[1h:1m])
+----
+
+If you don't have HTTP metrics, adapt this to a counter metric in your cluster.
+
+=== Step 2: Maximum Rate Over Time
+
+Find the maximum 5-minute rate over the last 6 hours:
+
+[source,promql]
+----
+max_over_time(rate(http_requests_total[5m])[6h:5m])
+----
+
+=== Step 3: Percentile Over Time
+
+Calculate the 95th percentile of memory usage over the last day:
+
+[source,promql]
+----
+quantile_over_time(0.95, container_memory_usage_bytes[1d:1h])
+----
+
+== Exercise 4: Logical Operators
+
+Practice using logical operators to combine conditions.
+
+=== Step 1: AND Operator
+
+Find containers that have both memory and CPU metrics. `ignoring(cpu)` is needed because only the CPU metric has a `cpu` label:
+
+[source,promql]
+----
+container_memory_usage_bytes
+  and ignoring(cpu) container_cpu_usage_seconds_total
+----
+
+How many containers match this condition?
+
+=== Step 2: UNLESS Operator
+
+Find containers with memory metrics but no CPU metrics:
+
+[source,promql]
+----
+container_memory_usage_bytes
+  unless ignoring(cpu) container_cpu_usage_seconds_total
+----
+
+=== Step 3: Complex Logical Expression
+
+Combine multiple conditions. For example, find memory usage for containers in OpenShift namespaces that also have CPU metrics:
+
+[source,promql]
+----
+container_memory_usage_bytes{namespace=~"openshift-.*"}
+  and ignoring(cpu) container_cpu_usage_seconds_total
+----
+
+== Exercise 5: Mathematical Functions
+
+Practice using mathematical functions to transform metric values.
+
+=== Step 1: Convert Bytes to Megabytes
+
+Convert memory usage from bytes to megabytes:
+
+[source,promql]
+----
+container_memory_usage_bytes / 1048576
+----
+
+=== Step 2: Round Values
+
+Round memory usage in megabytes to the nearest integer:
+
+[source,promql]
+----
+round(container_memory_usage_bytes / 1048576)
+----
+
+=== Step 3: Calculate Percentage
+
+Calculate memory usage as a percentage of the limit, for the containers that have a memory limit (`> 0` drops containers without a limit, which would otherwise give `+Inf` or `NaN`):
+
+[source,promql]
+----
+100 * container_memory_working_set_bytes{container!=""}
+  / (container_spec_memory_limit_bytes{container!=""} > 0)
+----
+
+== Exercise 6: Advanced OpenShift Patterns
+
+Practice writing advanced queries for OpenShift-specific monitoring scenarios.
+
+=== Step 1: CPU Usage Percentage
+
+Calculate CPU usage per namespace as a percentage of one CPU core (200 means two fully used cores):
+
+[source,promql]
+----
+sum(100 * rate(container_cpu_usage_seconds_total{
+  container!="",
+  container!="POD"
+}[5m])) by (namespace)
+----
+
+Which namespace has the highest CPU usage?
+
+=== Step 2: Pod Restart Rate
+
+Calculate the rate of pod container restarts:
+
+[source,promql]
+----
+sum(rate(kube_pod_container_status_restarts_total[5m]))
+  by (namespace, pod)
+----
+
+Are there any pods with high restart rates?
+
+=== Step 3: Top Memory Consumers with Rate
+
+Find the top 5 containers by memory usage, showing their current values:
+
+[source,promql]
+----
+topk(5, container_memory_working_set_bytes{container!=""})
+----
+
+Now find the top 5 by average memory usage over the last hour:
+
+[source,promql]
+----
+topk(5,
+  avg_over_time(container_memory_working_set_bytes{container!=""}[1h])
+)
+----
+
+Compare the results. Are they the same?
+
+== Exercise 7: Query Optimization
+
+Practice optimizing queries for better performance.
+
+=== Step 1: Compare Range Durations
+
+Compare query execution time for different range durations. A range must contain at least two samples for `rate()` to return a value, so make it at least twice the scrape interval; OpenShift scrapes some targets only once a minute, so a `[1m]` range can return nothing:
+
+[source,promql]
+----
+# Short range
+rate(http_requests_total[5m])
+
+# Longer range
+rate(http_requests_total[15m])
+----
+
+Note the execution time difference (if visible in your Prometheus UI).
+
+=== Step 2: Limit Results
+
+Instead of returning all results, limit to top 10:
+
+[source,promql]
+----
+# All results: memory usage of every pod
+sum by (namespace, pod) (container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+})
+
+# Top 10 only
+topk(10, sum by (namespace, pod) (container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}))
+----
+
+=== Step 3: Optimize Subquery Resolution
+
+Compare subqueries with different resolutions:
+
+[source,promql]
+----
+# Higher resolution (more data points)
+avg_over_time(rate(http_requests_total[5m])[1h:30s])
+
+# Lower resolution (fewer data points)
+avg_over_time(rate(http_requests_total[5m])[1h:5m])
+----
+
+Use the resolution that provides sufficient detail without excessive computation.
+
+== Exercise 8: Debugging Queries
+
+Practice debugging techniques for complex queries.
+
+=== Step 1: Check for Missing Metrics
+
+Check if a specific metric exists:
+
+[source,promql]
+----
+absent(nonexistent_metric)
+----
+
+This should return 1 if the metric is missing. Try with an existing metric to see it return empty.
+
+=== Step 2: Break Down Complex Queries
+
+Start with a simple query and build up complexity:
+
+[source,promql]
+----
+# Step 1: Basic metric
+container_memory_usage_bytes
+
+# Step 2: Add filter
+container_memory_usage_bytes{
+  namespace="openshift-monitoring",
+  container!="",
+  container!="POD"
+}
+
+# Step 3: Add aggregation
+sum(container_memory_usage_bytes{
+  namespace="openshift-monitoring",
+  container!="",
+  container!="POD"
+})
+
+# Step 4: Add a function
+# (memory is a gauge, so use deriv() rather than rate())
+sum(deriv(container_memory_usage_bytes{
+  namespace="openshift-monitoring",
+  container!="",
+  container!="POD"
+}[5m]))
+----
+
+=== Step 3: Validate Label Values
+
+Check what label values exist for a specific label:
+
+[source,promql]
+----
+# See all unique namespace values
+count by (namespace) (container_memory_usage_bytes)
+----
+
+== Verification
+
+After completing these exercises, verify your understanding:
+
+* Can you calculate rates from counter metrics?
+* Can you use functions appropriate for gauge metrics?
+* Can you write subqueries for time-based analysis?
+* Can you use logical operators to combine conditions?
+* Can you apply mathematical functions to transform values?
+* Can you write optimized queries for OpenShift monitoring?
+* Can you debug complex queries effectively?
+
+If you can answer yes to all these questions, you are ready to proceed to the next module, in which you turn PromQL queries into recording rules and alerting rules.

@@ -1,0 +1,380 @@
+= Exercises
+:hardbreaks-option:
+
+== Exercise 0: Setting Up Helm Autocomplete and Completion
+
+Before you work with Helm, enable shell completion so you can discover subcommands and options faster. Helm can generate a completion script for **PowerShell** and for **bash** (typical on Linux, macOS, and Git Bash). Use the option that matches your environment.
+
+=== Step 1: Generate the autocomplete script
+
+[source,powershell]
+----
+helm completion powershell | Out-File -FilePath $PROFILE -Append
+----
+
+[source,bash]
+----
+echo 'source <(helm completion bash)' >> ~/.bashrc
+----
+
+The generated configuration is appended to your PowerShell profile. The `$PROFILE` variable is the path to that profile, which loads each time you start PowerShell.
+The bash panel appends a common completion loader line to your `~/.bashrc` (Bash 4+).
+
+=== Step 2: Reload your profile
+
+[source,powershell]
+----
+. $PROFILE
+----
+
+[source,bash]
+----
+source ~/.bashrc
+----
+
+Alternatively, close and reopen the PowerShell window, or in bash open a new terminal after the previous `echo` to `~/.bashrc` (if you have not also run `source ~/.bashrc` in this session yet).
+
+=== Step 3: Verify
+
+Type `helm `, press the Tab key, and you should see command suggestions. Press Tab again to move through the list.
+
+== Exercise 1: Creating Charts and Working with Repositories
+
+In this exercise, you will create a Helm chart, explore its structure, work with repositories, and create a chart using a starter template.
+
+=== Step 1: Create a New Chart
+
+Create a new Helm chart named `my-first-chart`:
+
+[source,powershell]
+----
+helm create my-first-chart
+----
+
+[source,bash]
+----
+helm create my-first-chart
+----
+
+=== Step 2: List All of the Files Created
+
+List all of the files that were created in the chart directory:
+
+[source,powershell]
+----
+Get-ChildItem -Path .\my-first-chart -Recurse
+----
+
+[source,bash]
+----
+ls -R my-first-chart
+# or list every file with paths:
+# find my-first-chart -type f
+----
+
+This command shows you the complete directory structure of your new chart, including all subdirectories and files.
+
+=== Step 3: Delete the Chart
+
+Remove the chart directory that you just created:
+
+[source,powershell]
+----
+Remove-Item -Path .\my-first-chart -Recurse -Force
+----
+
+[source,bash]
+----
+rm -rf my-first-chart
+----
+
+=== Step 4: Add the Jetstack Repository
+
+Add the Jetstack Helm repository to your local Helm configuration:
+
+[source,powershell]
+----
+helm repo add jetstack https://charts.jetstack.io
+----
+
+[source,bash]
+----
+helm repo add jetstack https://charts.jetstack.io
+----
+
+=== Step 5: Pull the Jetstack Chart
+
+Update your repository information and pull a chart from the Jetstack repository.
+First, update your local repository cache:
+
+[source,powershell]
+----
+helm repo update
+----
+
+[source,bash]
+----
+helm repo update
+----
+
+Then, pull a chart from the Jetstack repository (for example, the cert-manager chart):
+
+[source,powershell]
+----
+helm pull jetstack/cert-manager
+----
+
+[source,bash]
+----
+helm pull jetstack/cert-manager
+----
+
+This downloads the chart package to your current directory.
+
+=== Step 6: Create a New Helm Chart with Jetstack as the Starter
+
+Create a new Helm chart using a Jetstack starter template.
+`--starter` does not accept a repository chart reference such as `jetstack/cert-manager`; it looks up a starter by name in Helm's `starters` directory.
+First, unpack the cert-manager chart into that directory, then create your chart from it:
+
+[source,powershell]
+----
+helm pull jetstack/cert-manager --untar `
+  --untardir "$(helm env HELM_DATA_HOME)\starters"
+helm create my-jetstack-chart --starter cert-manager
+----
+
+[source,bash]
+----
+helm pull jetstack/cert-manager --untar \
+  --untardir "$(helm env HELM_DATA_HOME)/starters"
+helm create my-jetstack-chart --starter cert-manager
+----
+
+Alternatively, `--starter` accepts an absolute path to an unpacked chart directory.
+
+This creates a new chart based on the Jetstack starter template, giving you a foundation that follows Jetstack's chart structure and best practices.
+
+[NOTE]
+====
+A starter provides only the templates and values. `helm create` writes a new `Chart.yaml` with `appVersion: 0.1.0`, and the cert-manager templates use `appVersion` as the default image tag. Before installing the new chart, set `appVersion` in `my-jetstack-chart/Chart.yaml` to the cert-manager version you pulled (for example `v1.21.2`), which is shown by:
+
+[source,powershell]
+----
+helm show chart jetstack/cert-manager
+----
+
+[source,bash]
+----
+helm show chart jetstack/cert-manager
+----
+====
+
+== Exercise 2: Finding RBAC Settings for cert-manager
+
+In this exercise, you will explore the cert-manager Helm chart to find its RBAC (Role-Based Access Control) settings.
+You will examine the default values and use templating to see what RBAC resources would be created.
+
+=== Step 1: Add the Jetstack Repository
+
+If you have not already added the Jetstack repository, add it now:
+
+[source,powershell]
+----
+helm repo add jetstack https://charts.jetstack.io
+----
+
+[source,bash]
+----
+helm repo add jetstack https://charts.jetstack.io
+----
+
+Update your repository cache to ensure you have the latest chart information:
+
+[source,powershell]
+----
+helm repo update
+----
+
+[source,bash]
+----
+helm repo update
+----
+
+=== Step 2: Show What the Default Values Are
+
+View the default values for the cert-manager chart:
+
+[source,powershell]
+----
+helm show values jetstack/cert-manager
+----
+
+[source,bash]
+----
+helm show values jetstack/cert-manager
+----
+
+This command displays all the default configuration values for the cert-manager chart.
+Look through the output to find RBAC-related settings, which are typically under sections like `rbac`, `serviceAccount`, or `global.rbac`.
+
+=== Step 3: Template the Install with Default Values
+
+Use the `helm template` command to render the cert-manager chart with default values and examine the RBAC resources that would be created:
+
+[source,powershell]
+----
+helm template cert-manager jetstack/cert-manager
+----
+
+[source,bash]
+----
+helm template cert-manager jetstack/cert-manager
+----
+
+This command renders all the Kubernetes manifests that would be created when installing cert-manager.
+Search through the output for RBAC resources such as:
+
+* `ServiceAccount` resources
+* `ClusterRole` resources
+* `ClusterRoleBinding` resources
+* `Role` resources
+* `RoleBinding` resources
+
+You can also filter the output to show only RBAC-related resources by piping the output through `Select-String` (or `grep` on macOS, Linux, or Git Bash):
+
+[source,powershell]
+----
+helm template cert-manager jetstack/cert-manager |
+  Select-String -Pattern `
+    "^kind: (ServiceAccount|ClusterRole|ClusterRoleBinding|Role|RoleBinding)"
+----
+
+[source,bash]
+----
+helm template cert-manager jetstack/cert-manager | \
+  grep -E \
+    "^kind: (ServiceAccount|ClusterRole|ClusterRoleBinding|Role|RoleBinding)"
+----
+
+The `^` anchors the match at the start of the line, so the indented `kind:` fields inside `roleRef` and `subjects` are not counted.
+This helps you quickly identify all RBAC-related resources that the chart would create.
+
+== Exercise 3: Exploring Local Helm Configuration
+
+In this exercise, you will explore Helm's local configuration and settings.
+You will examine Helm's environment variables and inspect the structure of registry and repository configuration files.
+
+=== Step 1: Identify Helm's Current Settings
+
+Use the `helm env` command to display Helm's current environment settings:
+
+[source,powershell]
+----
+helm env
+----
+
+[source,bash]
+----
+helm env
+----
+
+This command shows important Helm configuration paths and settings, including:
+
+* The location of Helm's configuration directory
+* The location of the cache directory
+* The location of the data directory
+* Plugin and registry paths
+
+These paths tell you where Helm stores its configuration files and cached data on your system.
+Always treat `helm env` as the source of truth: the locations depend on your operating system and can be changed with the `HELM_CONFIG_HOME`, `HELM_CACHE_HOME`, and `HELM_DATA_HOME` environment variables (or the `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, and `XDG_DATA_HOME` variables, which Helm also honors).
+
+You can also print a single setting by passing its name, which is handy in scripts:
+
+[source,powershell]
+----
+helm env HELM_CONFIG_HOME
+----
+
+[source,bash]
+----
+helm env HELM_CONFIG_HOME
+----
+
+If nothing has been overridden, the default locations are:
+
+[cols="1,2,2,2",options="header"]
+|===
+|Operating system |Configuration (`HELM_CONFIG_HOME`) |Cache (`HELM_CACHE_HOME`) |Data (`HELM_DATA_HOME`)
+
+|Linux
+|`~/.config/helm`
+|`~/.cache/helm`
+|`~/.local/share/helm`
+
+|macOS
+|`~/Library/Preferences/helm`
+|`~/Library/Caches/helm`
+|`~/Library/helm`
+
+|Windows
+|`%APPDATA%\helm`
+|`%TEMP%\helm`
+|`%APPDATA%\helm`
+|===
+
+=== Step 2: Show the Structure of the Repository Configuration
+
+Helm stores repository information in a configuration file whose path is reported by `helm env` as `HELM_REPOSITORY_CONFIG`.
+By default, it is `repositories.yaml` in the configuration directory from the table above.
+
+View the repository configuration file:
+
+[source,powershell]
+----
+Get-Content (helm env HELM_REPOSITORY_CONFIG)
+----
+
+[source,bash]
+----
+cat "$(helm env HELM_REPOSITORY_CONFIG)"
+----
+
+If the command reports that the file does not exist, you have not added any repositories yet.
+Add one (for example, with `helm repo add`) and try again.
+
+This shows you the structure of your repository configuration, including all repositories you have added, their URLs, and metadata.
+
+=== Step 3: Show the Structure of the Registry Configuration
+
+Helm also maintains configuration for OCI registries, at the path reported by `helm env` as `HELM_REGISTRY_CONFIG` (by default, `registry/config.json` in the configuration directory).
+View the registry configuration file:
+
+[source,powershell]
+----
+Get-Content (helm env HELM_REGISTRY_CONFIG)
+----
+
+[source,bash]
+----
+cat "$(helm env HELM_REGISTRY_CONFIG)"
+----
+
+If you have not logged in to a registry with `helm registry login` yet, the file may not exist.
+It contains authentication and configuration information for OCI registries that you have logged into.
+It may include credentials, registry URLs, and other registry-specific settings.
+
+You can also explore the Helm configuration directory structure:
+
+[source,powershell]
+----
+Get-ChildItem -Path (helm env HELM_CONFIG_HOME) -Recurse
+----
+
+[source,bash]
+----
+ls -R "$(helm env HELM_CONFIG_HOME)"
+# or, show every file: find "$(helm env HELM_CONFIG_HOME)" -type f
+----
+
+This shows you all Helm configuration files and directories, giving you a complete view of Helm's local configuration structure.

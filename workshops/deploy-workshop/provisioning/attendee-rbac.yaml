@@ -1,0 +1,100 @@
+# Read-only RBAC for workshop attendees.
+# Full setup steps: workshops/deploy-workshop/modules/ROOT/pages/setup-requirements.adoc
+#
+# Attendees work in their own project with the default project permissions.
+# Several lab steps read cluster-scoped objects (nodes, node metrics, priority
+# classes) and the Descheduler Operator's namespace, which a project user
+# cannot see. This file grants only those reads. It grants no write access.
+# It does let attendees read pods in every namespace, which `oc describe node`
+# needs for its "Allocated resources" section; pod specs can contain
+# environment values, so use it on lab clusters only. It grants no access to
+# secrets or config maps outside the attendee's project.
+#
+# Steps that stay instructor/admin only (not covered here): adding and removing
+# node taints, creating or changing the KubeDescheduler, and reading config
+# maps in the openshift-kube-scheduler and openshift-secondary-scheduler-operator
+# namespaces. Attendees create their own VPAs: the VPA operator adds that
+# permission to the default project admin and edit roles.
+#
+# Install the Kube Descheduler Operator before applying this file: the
+# RoleBinding below lives in openshift-kube-descheduler-operator and cannot be
+# created until that namespace exists.
+#
+# Apply:
+#   oc apply -f workshops/deploy-workshop/provisioning/attendee-rbac.yaml
+# Then put every attendee in the workshop-attendees group:
+#   oc adm groups new workshop-attendees user1 user2 ...
+#   oc adm groups add-users workshop-attendees user3      # group already exists
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: workshop-attendee-node-reader
+rules:
+# oc get nodes, oc describe node(s): Modules 1 and 2
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+# oc describe node (Allocated resources), oc get pods --all-namespaces:
+# Modules 1 and 2
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+# oc adm top nodes: Module 2, Exercise 6
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+# oc get priorityclasses: Module 1
+- apiGroups: ["scheduling.k8s.io"]
+  resources: ["priorityclasses"]
+  verbs: ["get", "list", "watch"]
+---
+# Bound only inside openshift-kube-descheduler-operator (RoleBinding below), so
+# these rules apply to that namespace alone.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: workshop-attendee-descheduler-reader
+rules:
+# oc get / describe kubedescheduler: Module 3
+- apiGroups: ["operator.openshift.io"]
+  resources: ["kubedeschedulers"]
+  verbs: ["get", "list", "watch"]
+# oc get deployment -n openshift-kube-descheduler-operator: Module 3, Exercise 3
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch"]
+# oc get pods, oc describe (events), oc logs -l ...: Module 3
+- apiGroups: [""]
+  resources: ["pods", "events"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: workshop-attendees-node-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: workshop-attendee-node-reader
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: workshop-attendees
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: workshop-attendees-descheduler-reader
+  namespace: openshift-kube-descheduler-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: workshop-attendee-descheduler-reader
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: workshop-attendees

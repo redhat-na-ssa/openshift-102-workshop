@@ -1,0 +1,483 @@
+= Module 1: Exercises
+:hardbreaks-option:
+
+This exercise section provides hands-on practice with OpenShift Service Mesh 3. You will learn how to enable sidecar injection and configure mutual TLS (mTLS) for your applications.
+
+== Prerequisites
+
+Before starting these exercises, ensure you have:
+
+* Access to an OpenShift cluster with OpenShift Service Mesh {ossm_version} (Istio {istio_version}) installed
+* Project administrator permissions in your namespace `{user}-sandbox`, which was created and labeled for sidecar injection during lab provisioning
+* The `oc` CLI tool installed and configured (`istioctl` {istio_version} is optional in this module)
+
+The instructor prepares the cluster as described in xref:setup-requirements.adoc[Setup Requirements].
+
+== Exercise 1: Enable Sidecar Injection
+
+In this exercise, you will enable automatic sidecar injection for a namespace in OpenShift Service Mesh 3.
+
+=== Understanding Istio CNI
+
+Before verifying the installation, it's important to understand the role of Istio CNI (Container Network Interface) in the service mesh architecture.
+
+Istio CNI is a critical component that handles network configuration for pods in the service mesh. Its primary purpose is to:
+
+* *Traffic Redirection*: Sets up rules to route pod traffic through the Envoy sidecar without needing extra privileges.
+* *Security*: Removes the need for `NET_ADMIN` and `NET_RAW`, making pods safer.
+* *Transparency*: Automatically intercepts all pod traffic.
+* *Initialization*: Prepares networking before the app starts.
+
+Without Istio CNI, sidecar injection would require pods to run with elevated privileges. The CNI plugin configures networking securely at pod startup.
+
+=== Step 1: Verify Service Mesh Installation
+
+First, verify that OpenShift Service Mesh 3 is installed and all critical components are running. Your instructor has given you read-only access to the `istio-system` and `istio-cni` namespaces for this step; if the commands return `Forbidden`, ask your instructor. Check the Istio control plane pods:
+
+[source,bash]
+----
+oc get pods -n istio-system
+----
+
+You should see the Istio control plane components running, including `istiod` pods. Verify they are in `Running` state:
+
+[source,bash]
+----
+oc get pods \
+  -n istio-system \
+  -l app=istiod
+----
+
+Next, verify that Istio CNI is installed and running. The CNI components are deployed in the `istio-cni` namespace as DaemonSets to run on each node:
+
+[source,bash]
+----
+oc get pods -n istio-cni
+----
+
+You should see Istio CNI pods running on each node in your cluster. Verify they are in `Running` state:
+
+[source,bash]
+----
+oc get daemonset -n istio-cni
+----
+
+=== Step 2: Set Your Namespace
+
+Set the `NAMESPACE` environment variable to your existing sandbox namespace. Your lab username is `{user}`, so your namespace is `{user}-sandbox`:
+
+[source,bash,subs="attributes+"]
+----
+export NAMESPACE={user}-sandbox
+----
+
+If your namespace has a different name, set `NAMESPACE` to that name instead.
+
+Verify that the namespace exists:
+
+[source,bash]
+----
+oc get namespace $NAMESPACE
+----
+
+=== Step 3: Understand the Sidecar Injection Label
+
+Automatic sidecar injection is enabled by adding the revision label `istio.io/rev` to a namespace. The label specifies which Istio control plane revision injects the sidecars. In this workshop your namespace was labeled during lab provisioning with the revision `{istio_revision}`, because labeling a namespace requires cluster-level permissions that a project user does not have. The provisioning step ran:
+
+[source,bash,subs="attributes+"]
+----
+oc label namespace $NAMESPACE istio.io/rev={istio_revision}
+----
+
+You do not need to run this command. If you use your own cluster with cluster administrator permissions and your namespace is not labeled yet, run it yourself.
+
+NOTE: *Instructors:* Looking up the revision name and labeling the attendee namespaces are described in xref:setup-requirements.adoc[Setup Requirements].
+
+=== Step 4: Verify Sidecar Injection Label
+
+Verify that the revision label has been applied:
+
+[source,bash]
+----
+oc get namespace $NAMESPACE --show-labels
+----
+
+You should see `istio.io/rev={istio_revision}` in the labels list. If the label is missing, ask your instructor to label your namespace before you continue.
+
+=== Step 5: Deploy a Test Application
+
+Deploy a simple application and a Service for it to verify that sidecar injection is working:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-app
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-app
+  template:
+    metadata:
+      labels:
+        app: test-app
+    spec:
+      containers:
+      - name: test-container
+        image: quay.io/nginx/nginx-unprivileged:latest
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-app
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: test-app
+  ports:
+  - port: 80
+    targetPort: 8080
+    name: http
+EOF
+----
+
+NOTE: OpenShift runs pods with a random non-root user ID (`restricted-v2` security context constraint), so the workshop uses the `nginx-unprivileged` image, which listens on port 8080. The Services expose it on port 80.
+
+=== Step 6: Verify Sidecar Injection
+
+Check that the Envoy sidecar has been injected into your pod:
+
+[source,bash]
+----
+oc get pods \
+  -n $NAMESPACE \
+  -l app=test-app
+----
+
+List the pod's init containers and containers:
+
+[source,bash]
+----
+oc get pod \
+  -n $NAMESPACE \
+  -l app=test-app \
+  -o jsonpath='{.items[0].spec.initContainers[*].name}{" | "}{.items[0].spec.containers[*].name}{"\n"}'
+----
+
+You should see `istio-validation istio-proxy | test-app`. On recent Kubernetes and Istio versions the `istio-proxy` sidecar runs as a Kubernetes native sidecar, so it is listed with the init containers, after the `istio-validation` container that Istio CNI adds to check the pod's network setup. Your application container is the only regular container.
+
+=== Step 7: Deploy a Client for Test Requests
+
+The following exercises and modules send test requests from inside the mesh. Deploy a long-running client once and run `curl` in it with `oc exec`:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: curl-client
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: curl-client
+  template:
+    metadata:
+      labels:
+        app: curl-client
+    spec:
+      containers:
+      - name: curl
+        image: quay.io/curl/curl:latest
+        command: ["sleep", "infinity"]
+EOF
+----
+
+Wait for the client to be ready, then send a request to the `test-app` Service:
+
+[source,bash]
+----
+oc rollout status deployment/curl-client -n $NAMESPACE
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -s -o /dev/null -w "%{http_code}\n" http://test-app
+----
+
+You should see `200`.
+
+NOTE: Avoid one-off `oc run --rm -i ... curl` pods in a namespace with sidecar injection. Depending on the Istio version, `curl` can start before the sidecar is ready, and the sidecar can keep the pod running after `curl` exits, so `oc run` waits until it times out.
+
+== Exercise 2: Enable Mutual TLS (mTLS)
+
+In this exercise, you will configure mutual TLS for your namespace using OpenShift Service Mesh 3.
+
+=== Step 1: Create a PeerAuthentication Policy
+
+Create a PeerAuthentication resource to enable strict mTLS for your namespace:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: ${NAMESPACE}
+spec:
+  mtls:
+    mode: STRICT
+EOF
+----
+
+This policy enforces mTLS for all traffic within your namespace.
+
+=== Step 2: Verify PeerAuthentication Policy
+
+Verify that the PeerAuthentication policy has been created:
+
+[source,bash]
+----
+oc get peerauthentication -n $NAMESPACE
+----
+
+=== Step 3: Create a DestinationRule (Optional but Recommended)
+
+While PeerAuthentication enables mTLS, it's a best practice to also create a DestinationRule to explicitly specify the TLS mode:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: default
+  namespace: ${NAMESPACE}
+spec:
+  host: "*.${NAMESPACE}.svc.cluster.local"
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+EOF
+----
+
+This DestinationRule ensures that all services in the namespace use Istio-managed certificates for mTLS.
+
+=== Step 4: Verify mTLS Configuration
+
+Check the Istio configuration to verify mTLS is enabled:
+
+[source,bash]
+----
+oc get peerauthentication \
+  -n $NAMESPACE \
+  -o yaml
+
+oc get destinationrule \
+  -n $NAMESPACE \
+  -o yaml
+----
+
+=== Step 5: Test mTLS Connection
+
+Deploy a second application to test mTLS communication:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-app-2
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-app-2
+  template:
+    metadata:
+      labels:
+        app: test-app-2
+    spec:
+      containers:
+      - name: test-container
+        image: quay.io/curl/curl:latest
+        command: ["sleep", "3600"]
+EOF
+----
+
+Wait for the pod to be ready, then exec into it and test connectivity:
+
+[source,bash]
+----
+POD_NAME=$(oc get pod \
+  -n $NAMESPACE \
+  -l app=test-app-2 \
+  -o jsonpath='{.items[0].metadata.name}')
+
+oc exec \
+  -n $NAMESPACE \
+  $POD_NAME \
+  -c test-container -- \
+  curl -v http://test-app:80
+----
+
+The connection should succeed, and you can verify in the Envoy access logs that mTLS is being used.
+
+=== Step 6: View Envoy Access Logs
+
+Access logging is disabled by default in OpenShift Service Mesh 3. Enable it for all workloads in your namespace with a Telemetry resource that uses Istio's built-in `envoy` access log provider:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: access-logs
+  namespace: ${NAMESPACE}
+spec:
+  accessLogging:
+  - providers:
+    - name: envoy
+EOF
+----
+
+Send the request from Step 5 again, then check the Envoy sidecar logs of the client:
+
+[source,bash]
+----
+POD_NAME=$(oc get pod \
+  -n $NAMESPACE \
+  -l app=test-app-2 \
+  -o jsonpath='{.items[0].metadata.name}')
+
+oc exec \
+  -n $NAMESPACE \
+  $POD_NAME \
+  -c test-container -- \
+  curl -s -o /dev/null http://test-app:80
+
+oc logs \
+  -n $NAMESPACE \
+  $POD_NAME \
+  -c istio-proxy |
+  tail -20
+----
+
+Each request is logged as one line that starts with a timestamp in brackets and contains the method and path, the response code, the bytes received and sent, the duration in milliseconds and the upstream cluster (`outbound|80||test-app...`). Exercise 3 shows how to recognize mTLS connections in the logs.
+
+== Exercise 3: Verify mTLS Configuration
+
+In this exercise, you will verify mTLS configuration using various methods.
+
+=== Step 1: Check PeerAuthentication and DestinationRule Resources
+
+Verify the mTLS policies are correctly applied by checking the resources:
+
+[source,bash]
+----
+oc get peerauthentication \
+  -n $NAMESPACE \
+  -o yaml
+
+oc get destinationrule \
+  -n $NAMESPACE \
+  -o yaml
+----
+
+This shows the PeerAuthentication and DestinationRule configurations that enforce mTLS.
+
+=== Step 2: Verify mTLS in Envoy Configuration
+
+Check the Envoy sidecar configuration to verify mTLS is enabled. Get the name of a pod:
+
+[source,bash]
+----
+POD_NAME=$(oc get pod \
+  -n $NAMESPACE \
+  -l app=test-app \
+  -o jsonpath='{.items[0].metadata.name}')
+----
+
+If `istioctl` is available, you can check the proxy configuration:
+
+[source,bash]
+----
+istioctl proxy-config cluster $POD_NAME \
+  -n $NAMESPACE \
+  --fqdn test-app.$NAMESPACE.svc.cluster.local \
+  -o json |
+  grep -i tls
+----
+
+This shows the TLS settings of the outbound cluster for `test-app`: the sidecar uses the TLS transport socket `envoy.transport_sockets.tls` with an `UpstreamTlsContext`. The default table output of `istioctl proxy-config cluster` has no TLS column, which is why the JSON output is used here.
+
+For a summary of the effective mTLS settings of the pod, use:
+
+[source,bash]
+----
+istioctl experimental describe pod $POD_NAME -n $NAMESPACE
+----
+
+The output shows the applied DestinationRule with `Traffic Policy TLS Mode: ISTIO_MUTUAL` and the effective PeerAuthentication with `Workload mTLS mode: STRICT`.
+
+NOTE: If the cluster has an ingress gateway in `istio-system`, the command then also tries to inspect it and ends with `cannot create resource "pods/portforward" in namespace "istio-system"`. That part needs more than your read-only access there; the lines about your own pod above it are complete.
+
+=== Step 3: Verify mTLS from Application Logs
+
+Check the Envoy access logs of the server (`test-app`) to verify mTLS connections. A request that arrived over Istio mTLS is logged with the TLS server name (SNI) that the client sidecar requested, `outbound_.80_._.test-app.<namespace>.svc.cluster.local`, near the end of the line. Send a new request and check the server's log:
+
+[source,bash]
+----
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -s -o /dev/null http://test-app
+
+POD_NAME=$(oc get pod \
+  -n $NAMESPACE \
+  -l app=test-app \
+  -o jsonpath='{.items[0].metadata.name}')
+
+oc logs \
+  -n $NAMESPACE \
+  $POD_NAME \
+  -c istio-proxy |
+  grep "outbound_.80_._.test-app"
+----
+
+NOTE: Envoy applies a changed logging configuration to new connections. A request that reuses a connection opened before you created the Telemetry resource may not be logged.
+
+== Summary
+
+In these exercises, you have:
+
+* Checked that your namespace is labeled for automatic sidecar injection
+* Verified that the Envoy sidecar is injected into application pods
+* Configured mutual TLS (mTLS) using PeerAuthentication and DestinationRule resources
+* Tested mTLS communication between services
+* Verified mTLS configuration using `istioctl`
+
+These foundational skills will be essential as you progress through the remaining modules of this workshop.
+
+== Troubleshooting
+
+If you encounter issues:
+
+* *Sidecar not injecting*: Verify the namespace revision label is correct (`istio.io/rev={istio_revision}`) and matches your Istio installation revision. Labeling the namespace requires cluster-level permissions; ask your instructor. Ensure the Istio control plane is running.
+* *mTLS not working*: Ensure both PeerAuthentication and DestinationRule are properly configured
+* *Connection failures*: Check that both pods have sidecars injected and are in the same namespace (or that proper policies exist for cross-namespace communication)
+* *Access denied*: Verify that the Istio control plane pods (`istiod`) are running and that certificates are being issued by checking the `istiod` logs
+

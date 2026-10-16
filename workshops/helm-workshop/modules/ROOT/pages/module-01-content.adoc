@@ -1,0 +1,210 @@
+= Background and Review
+:hardbreaks-option:
+
+.POP QUIZ!
+****
+Try to answer each question before expanding the section to see how strong your current understanding of Helm is.
+****
+
+*What is Helm and what problem does it solve?*
+
+.Answer
+[%collapsible]
+====
+Helm is a package manager for Kubernetes that simplifies the deployment and management of applications.
+It solves several key problems:
+
+* **Complexity**: Kubernetes manifests can be complex and repetitive.
+Helm packages these manifests into reusable charts.
+
+* **Configuration Management**: Helm provides a templating system that allows you to customize deployments without modifying the original manifests.
+
+* **Versioning**: Helm tracks versions of your deployments, making it easier to roll back to previous configurations.
+
+* **Dependency Management**: Helm can manage dependencies between different Kubernetes resources.
+====
+
+*What are the main components of a Helm chart?*
+
+.Answer
+[%collapsible]
+====
+A Helm chart consists of several key components including:
+
+* **Chart.yaml**: Contains metadata about the chart, including its name, version, and description.
+
+* **values.yaml**: Contains default configuration values that can be overridden during installation or upgrade.
+
+* **templates/**: A directory containing Kubernetes manifest templates written in Go template syntax.
+
+* **charts/**: An optional directory containing chart dependencies.
+
+* **README.md**: Documentation explaining how to use the chart.
+====
+
+*What is the difference between a Helm chart and a Helm release?*
+
+.Answer
+[%collapsible]
+====
+A **Helm chart** is a collection of files that describe a set of Kubernetes resources.
+It is a package that can be versioned, shared, and reused.
+A chart is like a class in programming.
+
+A **Helm release** is an instance of a chart that has been deployed to a Kubernetes cluster.
+When you install a chart, Helm creates a release with a unique name.
+You can have multiple releases of the same chart, each with different configurations.
+A release tracks the state of the deployed resources and allows you to upgrade, roll back, or uninstall the resources.
+====
+
+*What is the purpose of values.yaml in a Helm chart?*
+
+.Answer
+[%collapsible]
+====
+The `values.yaml` file serves as the default configuration file for a Helm chart.
+It defines default values that are used when rendering the templates in the chart.
+
+Key purposes include:
+
+* **Default Configuration**: Provides sensible defaults for all configurable parameters in the chart.
+
+* **Documentation**: Acts as documentation by showing all available configuration options and their default values.
+
+* **Customization**: Allows users to override these defaults when installing or upgrading a release, either by providing a custom values file or using the `--set` flag.
+
+* **Separation of Concerns**: Separates configuration from template logic, making charts more maintainable and easier to customize.
+====
+
+*What is a Helm repository and how is it used?*
+
+.Answer
+[%collapsible]
+====
+A Helm repository is a location where Helm charts are stored and can be shared.
+It is typically an HTTP server that serves an `index.yaml` file containing metadata about available charts.
+
+Helm repositories are used to:
+
+* **Share Charts**: Distribute charts to teams or the public.
+
+* **Version Management**: Track multiple versions of charts in a centralized location.
+
+* **Discovery**: Make it easy to find and install charts using `helm search` commands.
+
+To use a repository, you add it, update the local cache, and then install charts from it:
+
+[source,bash]
+----
+helm repo add <name> <url>
+helm repo update
+helm install <release-name> <repo-name>/<chart-name>
+----
+====
+
+*What is the difference between `helm install` and `helm upgrade`?*
+
+.Answer
+[%collapsible]
+====
+`helm install` is used to create a new release by installing a chart for the first time.
+It deploys the chart's resources to the Kubernetes cluster and creates a new release record.
+
+`helm upgrade` is used to update an existing release to a new version of a chart or with new configuration values.
+It modifies the existing resources in the cluster based on the differences between the current and desired state.
+
+Key differences:
+
+* **Install** creates a new release; **upgrade** modifies an existing one.
+
+* **Install** requires a unique release name; **upgrade** uses the name of an existing release.
+
+* **Upgrade** can use the `--install` flag to create a release if it doesn't exist, combining both operations.
+====
+
+*What is a Helm template and how does templating work?*
+
+.Answer
+[%collapsible]
+====
+A Helm template is a Kubernetes manifest file that contains placeholders written in Go template syntax.
+These placeholders are replaced with actual values when Helm renders the chart.
+
+Templating allows you to:
+
+* **Parameterize Resources**: Use variables like `{{ .Values.replicas }}` to make resource counts configurable.
+
+* **Conditional Logic**: Use `{{ if }}` statements to include or exclude resources based on configuration.
+
+* **Loops**: Use `{{ range }}` to create multiple resources from a list.
+
+* **Access Built-in Objects**: Access information like release name, namespace, and chart metadata using objects like `{{ .Release.Name }}` and `{{ .Chart.Name }}`.
+
+When you run `helm install` or `helm upgrade`, Helm processes all templates in the `templates/` directory, replaces the placeholders with values from `values.yaml` and any overrides, and sends the rendered manifests to Kubernetes.
+====
+
+*How are dependencies defined and managed in Chart.yaml?*
+
+.Answer
+[%collapsible]
+====
+Dependencies in Helm charts are defined in the `dependencies` section of the `Chart.yaml` file.
+Each dependency names another chart, called a subchart, that your chart is built from or relies on.
+
+A dependency entry includes:
+
+* **Name**: The name of the dependent chart.
+
+* **Version**: The version or version range of the chart to use (e.g., "1.2.3" or "~1.2.0").
+
+* **Repository**: The URL of the Helm repository where the chart can be found, or "file://" for local chart dependencies.
+
+* **Condition**: An optional condition that determines whether the dependency should be installed (useful for optional dependencies).
+
+* **Tags**: Optional tags that can be used to group dependencies and control their installation.
+
+To use dependencies, you run `helm dependency update`, which downloads the specified charts into the `charts/` directory.
+Helm does not install dependencies separately or ahead of the parent chart.
+When you install the parent chart, Helm renders it together with all of its subcharts into a single release and sends the combined manifests to Kubernetes sorted by resource kind (for example, Namespaces, ServiceAccounts, and ConfigMaps before Deployments), regardless of which chart each resource came from.
+
+In the parent chart, the values of a subchart live under a key named after the subchart: `.Values.<subchart-name>` (for example, `.Values.postgresql.auth.username`), and the subchart sees that block as its own `.Values`.
+If the subchart name contains a dash, use `index`, for example `{{ index .Values "my-subchart" "replicaCount" }}`.
+The `.Chart.Dependencies` object only lists the dependency entries declared in `Chart.yaml` (name, version, repository, and so on); it does not expose the subchart's values.
+====
+
+*How does Helm manage rollbacks and what information does it track?*
+
+.Answer
+[%collapsible]
+====
+Helm tracks the history of each release, storing information about every install, upgrade, and rollback operation.
+This history includes:
+
+* **Release Version**: Each operation increments the release revision number.
+
+* **Chart Version**: The version of the chart that was deployed.
+
+* **Configuration**: The values that were used for that revision.
+
+* **Status**: Whether the release was successful, pending, or failed.
+
+* **Description**: Optional notes about what changed in that revision.
+
+To roll back, you use the following command, which reinstalls the resources from the specified revision:
+
+[source,bash]
+----
+helm rollback <release-name> <revision-number>
+----
+
+Helm maintains this history in Kubernetes secrets, allowing you to see all revisions and revert to any previous state if needed.
+See all revisions with:
+
+[source,bash]
+----
+helm history <release-name>
+----
+====
+
+If you could not answer all of the questions, that is perfectly okay.
+We will be reviewing these concepts and exploring more advanced topics as we progress through the workshop.

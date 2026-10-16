@@ -7,25 +7,29 @@ This site bundles the following hands-on workshops into one Antora showroom:
 * xref:master@istio-workshop:ROOT:index.adoc[Istio service mesh workshop] — traffic management with Istio.
 * xref:master@prometheus-workshop:ROOT:index.adoc[Prometheus query workshop] — PromQL and observability basics.
 
-Upstream sources (same layout as each standalone workshop):
-
-* https://github.com/shpwrck/helm-workshop
-* https://github.com/shpwrck/deploy-workshop
-* https://github.com/shpwrck/istio-workshop
-* https://github.com/shpwrck/prometheus-workshop
-
 include::partial$cli-tools-container.adoc[]
 
 == Local build
 
-Clone with submodules, then generate the site:
+Clone the repository, then generate and serve the site:
 
 [source,bash]
 ----
-git clone --recurse-submodules <your-fork-or-repo-url>
-cd openshift-102
-./scripts/verify-submodules.sh
+git clone <your-fork-or-repo-url>
+----
+
+[source,bash]
+----
+cd openshift-102-workshop
+----
+
+[source,bash]
+----
 utilities/lab-build
+----
+
+[source,bash]
+----
 utilities/lab-serve
 ----
 

@@ -1,0 +1,446 @@
+= Advanced Query Patterns
+:hardbreaks-option:
+
+This module covers advanced PromQL patterns including rate functions, subqueries, logical operators, and time-based functions. You will learn how to write complex queries for real-world monitoring scenarios.
+
+== Rate Functions
+
+Rate functions calculate the per-second average rate of increase of a time series. They are essential for working with counter metrics.
+
+=== The `rate()` Function
+
+The `rate()` function calculates the per-second average rate of increase:
+
+[source,promql]
+----
+rate(http_requests_total[5m])
+----
+
+This calculates the average per-second rate of HTTP requests over the last 5 minutes.
+
+=== The `irate()` Function
+
+The `irate()` function calculates the per-second instant rate based on the last two data points:
+
+[source,promql]
+----
+irate(http_requests_total[5m])
+----
+
+Use `irate()` when you need the most recent rate and `rate()` for smoother averages.
+
+=== The `increase()` Function
+
+The `increase()` function calculates the total increase over a time range:
+
+[source,promql]
+----
+increase(http_requests_total[1h])
+----
+
+This shows the total number of requests in the last hour.
+
+=== Rate with Aggregation
+
+Combine rate functions with aggregations:
+
+[source,promql]
+----
+# Total request rate per service
+sum(rate(http_requests_total[5m])) by (service)
+
+# Average request rate per namespace
+avg(rate(http_requests_total[5m])) by (namespace)
+----
+
+== Working with Gauges
+
+Gauges represent values that can go up or down. Different functions are used for gauges compared to counters.
+
+=== Instant Values
+
+For gauges, you typically query the current value:
+
+[source,promql]
+----
+container_memory_usage_bytes
+----
+
+=== Average Over Time
+
+Calculate the average value over a time range:
+
+[source,promql]
+----
+avg_over_time(container_memory_usage_bytes[5m])
+----
+
+=== Max and Min Over Time
+
+[source,promql]
+----
+# Maximum memory usage over the last hour
+max_over_time(container_memory_usage_bytes[1h])
+
+# Minimum memory usage over the last hour
+min_over_time(container_memory_usage_bytes[1h])
+----
+
+=== Rate of Change for Gauges
+
+Use `delta()` or `deriv()` for gauges:
+
+[source,promql]
+----
+# Change in memory usage over 5 minutes
+delta(container_memory_usage_bytes[5m])
+
+# Per-second derivative
+deriv(container_memory_usage_bytes[5m])
+----
+
+== Subqueries
+
+Subqueries allow you to evaluate an instant query at regular intervals over a time range.
+
+=== Basic Subquery Syntax
+
+[source,text]
+----
+<instant_query>[<range>:<resolution>]
+----
+
+=== Subquery Example
+
+[source,promql]
+----
+# Average rate over 5 minutes,
+# evaluated every 30 seconds for the last hour
+avg_over_time(rate(http_requests_total[5m])[1h:30s])
+----
+
+=== Common Subquery Patterns
+
+[source,promql]
+----
+# Maximum 5-minute rate over the last hour
+max_over_time(rate(http_requests_total[5m])[1h:5m])
+
+# 95th percentile of memory usage over the last day
+quantile_over_time(0.95, container_memory_usage_bytes[1d:1h])
+----
+
+== Logical Operators
+
+Logical operators allow you to combine multiple conditions in queries.
+
+=== AND Operator
+
+The `and` operator returns the left-hand side if the right-hand side has a matching time series. Series match only when all their labels are equal; `container_cpu_usage_seconds_total` has an extra `cpu` label, so the examples use `ignoring(cpu)` to leave it out of the comparison:
+
+[source,promql]
+----
+# Memory usage only for containers that also have CPU metrics
+container_memory_usage_bytes
+  and ignoring(cpu) container_cpu_usage_seconds_total
+----
+
+=== OR Operator
+
+The `or` operator returns all time series from the left-hand side, plus those from the right-hand side that have no matching time series on the left-hand side:
+
+[source,promql]
+----
+# Number of running pods per namespace,
+# and 0 for namespaces without running pods
+count by (namespace) (kube_pod_status_phase{phase="Running"} == 1)
+  or
+0 * group by (namespace) (kube_namespace_status_phase)
+----
+
+The left-hand side has a series only for namespaces with at least one running pod. The right-hand side has a series with the value 0 for every namespace. Because both sides have only the `namespace` label, a right-hand series is kept only for the namespaces that are missing on the left, such as `default` or `openshift`, so every namespace appears exactly once.
+
+=== Unless Operator
+
+The `unless` operator returns the left-hand side if the right-hand side has no matching time series:
+
+[source,promql]
+----
+# Memory usage for containers without CPU metrics
+container_memory_usage_bytes
+  unless ignoring(cpu) container_cpu_usage_seconds_total
+----
+
+On OpenShift this mostly returns the pod sandbox (`container="POD"`) and cgroup-level series without a `container` label, not your application containers, which have CPU metrics.
+
+== Time-Based Functions
+
+PromQL provides functions for working with timestamps and time ranges.
+
+=== `time()` Function
+
+Returns the current time in seconds since the Unix epoch:
+
+[source,promql]
+----
+time()
+----
+
+=== `timestamp()` Function
+
+Returns the timestamp of each sample:
+
+[source,promql]
+----
+timestamp(container_memory_usage_bytes)
+----
+
+=== Time Calculations
+
+Calculate time differences or offsets:
+
+[source,promql]
+----
+# Time 1 hour ago
+time() - 3600
+
+# Metrics from 1 hour ago (if available)
+container_memory_usage_bytes offset 1h
+----
+
+== Mathematical Functions
+
+PromQL includes various mathematical functions for transforming values.
+
+=== Basic Math Functions
+
+[source,promql]
+----
+# Absolute value
+abs(container_memory_usage_bytes - 1073741824)
+
+# Square root
+sqrt(container_memory_usage_bytes)
+
+# Logarithm (natural log)
+ln(container_memory_usage_bytes)
+
+# Logarithm base 10
+log10(container_memory_usage_bytes)
+
+# Exponentiation
+exp(rate(http_requests_total[5m]))
+----
+
+=== Rounding Functions
+
+[source,promql]
+----
+# Round to nearest integer
+round(container_memory_usage_bytes / 1048576)
+
+# Round up
+ceil(container_memory_usage_bytes / 1048576)
+
+# Round down
+floor(container_memory_usage_bytes / 1048576)
+----
+
+== Label Manipulation
+
+Functions for modifying labels in query results.
+
+=== `label_replace()`
+
+Add or modify labels:
+
+[source,promql]
+----
+label_replace(
+  container_memory_usage_bytes,
+  "environment",
+  "$1",
+  "namespace",
+  "(.*)-prod"
+)
+----
+
+=== `label_join()`
+
+Join multiple label values:
+
+[source,promql]
+----
+label_join(
+  container_memory_usage_bytes,
+  "full_name",
+  "-",
+  "namespace",
+  "pod",
+  "container"
+)
+----
+
+== Advanced Patterns for OpenShift
+
+=== CPU Usage as a Percentage of One Core
+
+Calculate CPU usage as a percentage of one CPU core. A value of 100 means one fully used core; it is not a percentage of the node's capacity or of the container's CPU limit:
+
+[source,promql]
+----
+# CPU usage per container, as a percentage of one core
+100 * rate(container_cpu_usage_seconds_total{
+  container!="",
+  container!="POD"
+}[5m])
+
+# Average CPU usage per container in each namespace,
+# as a percentage of one core
+avg(100 * rate(container_cpu_usage_seconds_total{
+  container!="",
+  container!="POD"
+}[5m])) by (namespace)
+----
+
+=== Memory Utilization Percentage
+
+Calculate memory utilization relative to limits:
+
+[source,promql]
+----
+# Memory usage as a percentage of the limit,
+# only for containers that have a memory limit
+100 * container_memory_working_set_bytes{container!=""}
+  / (container_spec_memory_limit_bytes{container!=""} > 0)
+----
+
+=== Request Rate with Error Rate
+
+Calculate error rates, here for requests to the Kubernetes API server. Resources that have never returned a `5xx` response do not appear in the result:
+
+[source,promql]
+----
+# Error rate as percentage of total requests, per resource
+100 * sum(rate(apiserver_request_total{code=~"5.."}[5m]))
+    by (resource)
+  / sum(rate(apiserver_request_total[5m])) by (resource)
+----
+
+=== Pod Restart Rate
+
+Monitor pod restarts:
+
+[source,promql]
+----
+# Rate of pod container restarts
+rate(kube_pod_container_status_restarts_total[5m])
+----
+
+=== Resource Quota Usage
+
+Monitor how much of each namespace's memory-request quota is in use. Only namespaces with a ResourceQuota that sets `requests.memory` appear in the result:
+
+[source,promql]
+----
+# Requested memory as a percentage of the requests.memory quota
+100 * sum by (namespace)
+    (kube_resourcequota{resource="requests.memory", type="used"})
+  / sum by (namespace)
+    (kube_resourcequota{resource="requests.memory", type="hard"})
+----
+
+== Query Optimization
+
+=== Avoid Overly Long Ranges
+
+Long ranges increase query time and memory usage:
+
+[source,promql]
+----
+# Good: 5-minute range
+rate(http_requests_total[5m])
+
+# Less efficient: 1-day range
+rate(http_requests_total[1d])
+----
+
+=== Use Appropriate Resolution
+
+For subqueries, use appropriate resolution:
+
+[source,promql]
+----
+# Good: 1-minute resolution
+avg_over_time(rate(http_requests_total[5m])[1h:1m])
+
+# Less efficient: 1-second resolution
+avg_over_time(rate(http_requests_total[5m])[1h:1s])
+----
+
+=== Limit Result Size
+
+Use `topk()` or `bottomk()` to limit results. Aggregate first, so that each result is a meaningful unit such as a pod, and select only container series as in the earlier modules:
+
+[source,promql]
+----
+# Only the 10 pods with the highest memory usage
+topk(10, sum by (namespace, pod) (container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}))
+----
+
+In a graph (a range query), `topk()` is evaluated separately at every step, so the chart can show more than 10 series when the top 10 change over time.
+
+== Debugging Queries
+
+=== Check for Missing Metrics
+
+Use `absent()` to detect if a metric is missing:
+
+[source,promql]
+----
+# Returns 1 if metric is missing, empty if present
+absent(http_requests_total)
+----
+
+=== Validate Label Values
+
+Check what label values exist:
+
+[source,promql]
+----
+# See all namespace values
+group by (namespace) (container_memory_usage_bytes)
+----
+
+=== Test Query Components
+
+Break complex queries into parts:
+
+[source,promql]
+----
+# Test the inner query first
+rate(http_requests_total[5m])
+
+# Then add aggregation
+sum(rate(http_requests_total[5m])) by (service)
+----
+
+== Summary
+
+In this module, you learned:
+
+* Rate functions: `rate()`, `irate()`, and `increase()` for counters
+* Functions for gauges: `avg_over_time()`, `max_over_time()`, `delta()`, `deriv()`
+* Subqueries for time-based analysis
+* Logical operators: `and`, `or`, `unless`
+* Time-based functions: `time()`, `timestamp()`, `offset`
+* Mathematical functions for value transformation
+* Label manipulation functions
+* Advanced patterns for OpenShift monitoring
+* Query optimization techniques
+* Debugging strategies for complex queries
+
+You now have the knowledge to write sophisticated Prometheus queries for real-world monitoring scenarios. In the next module, you will use such queries in recording rules and alerting rules for your own applications.

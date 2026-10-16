@@ -1,15 +1,36 @@
 = OpenShift 102 Workshop
 
-Antora showroom site that bundles the Helm, advanced deployment, Istio, and Prometheus workshops maintained in separate repositories.
+Antora showroom site for the OpenShift 102 workshops: Helm, advanced deployment, Istio, and Prometheus.
+All four live in this repository and are published together as one site and one PDF.
 
-== Upstream workshops
+== Workshops
 
-* https://github.com/shpwrck/helm-workshop
-* https://github.com/shpwrck/deploy-workshop
-* https://github.com/shpwrck/istio-workshop
-* https://github.com/shpwrck/prometheus-workshop
+Each workshop is its own Antora component under `workshops/`, so the four keep their own navigation and URLs inside the one site.
+The hub pages (start page and the shared CLI tools page) are in `content/openshift-102/`, together with the site's Antora extensions (`lib/`) and UI overrides (`supplemental-ui/`), which all four workshops share.
 
-This repository vendors them as Git submodules under `workshops/` and exposes each as its own Antora component (see `content/bundled/*/antora.yml`) so they can coexist in a single generated site.
+[cols="1,2,2",options="header"]
+|===
+|Workshop |Source |Instructor setup
+
+|Helm
+|`workshops/helm-workshop/`
+|`workshops/helm-workshop/modules/ROOT/pages/setup-requirements.adoc`
+
+|Advanced deployment
+|`workshops/deploy-workshop/`
+|`workshops/deploy-workshop/modules/ROOT/pages/setup-requirements.adoc`, plus the attendee RBAC in `workshops/deploy-workshop/provisioning/`
+
+|Istio service mesh
+|`workshops/istio-workshop/`
+|`workshops/istio-workshop/modules/ROOT/pages/setup-requirements.adoc`; the Istio and Service Mesh versions are attributes in `workshops/istio-workshop/antora.yml`
+
+|Prometheus queries
+|`workshops/prometheus-workshop/`
+|`workshops/prometheus-workshop/modules/ROOT/pages/setup-requirements.adoc`
+|===
+
+Each workshop's `antora.yml` names the component (`helm-workshop`, `deploy-workshop`, and so on) and holds its AsciiDoc attributes; `nav.adoc` under `modules/ROOT/` sets its page order.
+The four workshops used to be separate repositories pulled in as Git submodules; they were folded in here so there is one repository to maintain.
 
 == Workshop CLI tools image
 
@@ -31,10 +52,21 @@ Interactive `bash` (for example from the pod **Terminal** tab after running `bas
 
 [source,bash]
 ----
-git clone --recurse-submodules <repository-url>
-cd openshift-102
-./scripts/verify-submodules.sh
+git clone <repository-url>
+----
+
+[source,bash]
+----
+cd openshift-102-workshop
+----
+
+[source,bash]
+----
 utilities/lab-build
+----
+
+[source,bash]
+----
 utilities/lab-serve
 ----
 
@@ -49,13 +81,6 @@ antora generate default-site.yml --stacktrace \
   --attribute tools-image-tag=v1.0.4
 ----
 
-If you already cloned without submodules:
-
-[source,bash]
-----
-git submodule update --init --recursive
-----
-
 == Live reload (optional)
 
 [source,bash]
@@ -65,7 +90,8 @@ podman-compose up --build
 
 == GitHub Pages
 
-The workflow in `.github/workflows/gh-pages.yml` publishes the `www/` output from `antora generate default-site.yml` using the same approach as the upstream workshop repositories.
+The workflow in `.github/workflows/gh-pages.yml` publishes the `www/` output from `antora generate default-site.yml` and stamps the page footer with the release, commit and build time.
+It builds the site for the URL GitHub Pages reports, so it works at `https://<owner>.github.io/<repo>/` or on a custom domain.
 
 Each run also packages the Helm chart under **`helm/`** on the same site and writes **`helm/index.yaml`**, so GitHub Pages doubles as a **live Helm chart repository** (no OCI needed for `helm repo add`).
 

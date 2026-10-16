@@ -1,0 +1,260 @@
+= Exercises
+:hardbreaks-option:
+
+== Exercise 1: Packaging a Chart as an OCI Image and Examining the Artifact
+
+In this exercise, you will package a Helm chart and push it to an OCI registry, then examine the resulting OCI artifact with Helm and standard container registry tools.
+This demonstrates how Helm charts are stored as OCI artifacts and how you can inspect them using standard container tools.
+
+=== Step 1: Create and Package a Chart
+
+Create a new Helm chart for this exercise:
+
+[source,powershell]
+----
+helm create oci-chart
+----
+
+[source,bash]
+----
+helm create oci-chart
+----
+
+Package the chart:
+
+[source,powershell]
+----
+helm package ./oci-chart
+----
+
+[source,bash]
+----
+helm package ./oci-chart
+----
+
+This creates an `oci-chart-0.1.0.tgz` file (assuming version 0.1.0 in Chart.yaml).
+
+=== Step 2: Push the Chart to an OCI Registry
+
+If you do not have an OCI registry to push to, start a local one with Podman or Docker (the local examples in this exercise use it at `localhost:5000`):
+
+[source,powershell]
+----
+podman run -d --replace `
+  --name registry `
+  -p 5000:5000 `
+  quay.io/libpod/registry:2.8.2
+# or: docker run -d `
+#   --name registry `
+#   -p 5000:5000 `
+#   quay.io/libpod/registry:2.8.2
+----
+
+[source,bash]
+----
+podman run -d --replace \
+  --name registry \
+  -p 5000:5000 \
+  quay.io/libpod/registry:2.8.2
+# or: docker run -d \
+#   --name registry \
+#   -p 5000:5000 \
+#   quay.io/libpod/registry:2.8.2
+----
+
+If the registry from Module 2 is still running, `--replace` restarts it in place, so the command is safe to run again.
+Docker has no `--replace`; skip the `docker run` if a container named `registry` is already listed by:
+
+[source,powershell]
+----
+docker ps
+----
+
+[source,bash]
+----
+docker ps
+----
+
+This local registry serves plain HTTP without authentication: you do not need to log in to it, but add `--plain-http` to the Helm commands that use it.
+The OpenShift 102 tools pod has no container engine, so from the tools pod use a registry that you can push to instead.
+
+Before pushing to a registry that requires authentication, log in to it:
+
+[source,powershell]
+----
+helm registry login <registry-url>
+----
+
+[source,bash]
+----
+helm registry login <registry-url>
+----
+
+Push the packaged chart to an OCI registry:
+
+[source,powershell]
+----
+helm push oci-chart-0.1.0.tgz oci://<registry-url>/charts
+----
+
+[source,bash]
+----
+helm push oci-chart-0.1.0.tgz oci://<registry-url>/charts
+----
+
+For example, if using a local registry:
+
+[source,powershell]
+----
+helm push oci-chart-0.1.0.tgz oci://localhost:5000/charts --plain-http
+----
+
+[source,bash]
+----
+helm push oci-chart-0.1.0.tgz oci://localhost:5000/charts --plain-http
+----
+
+This uploads your chart as an OCI artifact to the registry.
+
+=== Step 3: Pull the Chart Artifact
+
+A chart in an OCI registry is not a container image: its configuration has the media type `application/vnd.cncf.helm.config.v1+json`, so `docker pull` and `podman pull` reject it.
+Pull it with Helm instead:
+
+[source,powershell]
+----
+helm pull oci://<registry-url>/charts/oci-chart --version 0.1.0
+----
+
+[source,bash]
+----
+helm pull oci://<registry-url>/charts/oci-chart --version 0.1.0
+----
+
+For a local registry example:
+
+[source,powershell]
+----
+helm pull oci://localhost:5000/charts/oci-chart `
+  --version 0.1.0 `
+  --plain-http
+----
+
+[source,bash]
+----
+helm pull oci://localhost:5000/charts/oci-chart \
+  --version 0.1.0 \
+  --plain-http
+----
+
+This downloads `oci-chart-0.1.0.tgz` to the current directory.
+
+NOTE: In the OpenShift 102 tools pod there is no Docker Engine: `docker` is a small shim over `skopeo`. Its `docker pull` copies the artifact's raw files into a temporary directory instead of pulling an image, and `docker manifest inspect` in the next step works as shown.
+
+=== Step 4: Inspect the OCI Artifact
+
+Examine the manifest of the OCI artifact:
+
+[source,powershell]
+----
+docker manifest inspect <registry-url>/charts/oci-chart:0.1.0
+----
+
+[source,bash]
+----
+docker manifest inspect <registry-url>/charts/oci-chart:0.1.0
+----
+
+This shows the OCI manifest structure, including:
+
+* Media types
+* Layers
+* Annotations
+* Configuration
+
+With Podman, use `skopeo` instead, because `podman manifest inspect` reads only manifest lists.
+For example, for the local registry from Step 2:
+
+[source,bash]
+----
+skopeo inspect --tls-verify=false --raw \
+  docker://localhost:5000/charts/oci-chart:0.1.0
+----
+
+=== Step 5: Inspect the Artifact Configuration
+
+The configuration of a chart artifact holds the chart metadata from `Chart.yaml`, not image settings such as the architecture or environment variables, so `docker image inspect` cannot read it.
+Show it with `skopeo` (installed in the OpenShift 102 tools pod; not available for Windows) or with Helm:
+
+[source,powershell]
+----
+helm show chart oci://<registry-url>/charts/oci-chart --version 0.1.0
+----
+
+[source,bash]
+----
+skopeo inspect --config --raw \
+  docker://<registry-url>/charts/oci-chart:0.1.0
+# without skopeo:
+# helm show chart oci://<registry-url>/charts/oci-chart \
+#   --version 0.1.0
+----
+
+This shows the chart name, version, `appVersion`, description, and type.
+For the plain-HTTP local registry from Step 2, add `--tls-verify=false` to `skopeo` commands and `--plain-http` to `helm` commands.
+
+=== Step 6: View the Artifact Layers
+
+List the layers in the artifact manifest:
+
+[source,powershell]
+----
+(docker manifest inspect <registry-url>/charts/oci-chart:0.1.0 |
+  ConvertFrom-Json).layers
+----
+
+[source,bash]
+----
+skopeo inspect --raw docker://<registry-url>/charts/oci-chart:0.1.0 |
+  jq .layers
+# or: docker manifest inspect <registry-url>/charts/oci-chart:0.1.0 |
+#   jq .layers
+----
+
+For the local registry from Step 2:
+
+[source,bash]
+----
+skopeo inspect --tls-verify=false --raw \
+  docker://localhost:5000/charts/oci-chart:0.1.0 |
+  jq .layers
+----
+
+A chart artifact has a single layer with the media type `application/vnd.cncf.helm.chart.content.v1.tar+gzip`: the packaged chart `.tgz`.
+It has no image history, so `docker history` does not apply to chart artifacts.
+
+This exercise demonstrates that Helm charts stored as OCI artifacts can be examined with standard OCI registry tools such as `docker manifest inspect` and `skopeo`, even though they are not container images, showing how Helm integrates with the OCI ecosystem.
+
+
+=== Step 7: Clean Up
+
+If you started the local registry, stop and remove it:
+
+[source,powershell]
+----
+podman rm -f registry
+# or: docker rm -f registry
+----
+
+[source,bash]
+----
+podman rm -f registry
+# or: docker rm -f registry
+----
+
+If you installed `my-release` in Module 2, uninstall it as well:
+
+[source,bash]
+----
+helm uninstall my-release
+----

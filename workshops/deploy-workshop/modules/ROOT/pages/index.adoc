@@ -1,0 +1,50 @@
+= Advanced Deployment Lab
+
+This workshop provides a comprehensive exploration of how Kubernetes manages pod lifecycle, from initial scheduling through eviction, and how container images are distributed across your cluster. You will learn the mechanisms that control where pods run, when they are moved or terminated, and how to configure your cluster for optimal performance and reliability.
+
+ifdef::openshift-102-showroom[]
+include::openshift-102:ROOT:partial$cli-tools-container.adoc[]
+endif::[]
+
+== Overview
+
+The Advanced Deployment Lab covers four critical areas of Kubernetes operations:
+
+* **Module 1 - Pod Scheduling Fundamentals**: Understanding the Kubernetes scheduling process, including the filtering and scoring phases, how to use secondary scheduler operators for specialized workload requirements, and pod priority with preemption.
+* **Module 2 - Advanced Pod Scheduling**: Learning advanced scheduling mechanisms including node affinity, taints and tolerations, Node Feature Discovery, pod affinity and anti-affinity, topology spread constraints with skew values, and resource requirements.
+* **Module 3 - Pod Descheduling and Scaling**: Exploring descheduling strategies, horizontal pod autoscaling (HPA), vertical pod autoscaling (VPA), and how these components interact with each other.
+* **Module 4 - Image Distribution and Optimization**: Understanding image pull policies, image placement strategies, lean base images, and the Image Puller operator for optimizing image distribution across your cluster.
+
+== Prerequisites
+
+This workshop assumes the following:
+
+* Basic understanding of Kubernetes concepts (pods, nodes, namespaces)
+* Familiarity with YAML configuration files
+* Access to an OpenShift 4.16 or later cluster (Kubernetes 1.29 or later)
+* Command-line experience with `oc`
+* Understanding of container images and registries
+* A lab environment prepared as described in xref:setup-requirements.adoc[Setup Requirements]
+
+If you are new to Kubernetes, we recommend reviewing the https://kubernetes.io/docs/concepts/[Kubernetes Concepts] documentation before proceeding.
+
+=== Lab Provisioning (for administrators)
+
+The cluster, operators, attendee roles, workstation tools and images the exercises need, with the provisioning steps and a verification checklist, are on the xref:setup-requirements.adoc[Setup Requirements] page.
+
+== Learning Objectives
+
+After completing this workshop, you will be able to:
+
+* Understand the Kubernetes scheduling process, including filtering and scoring phases
+* Configure and use secondary scheduler operators for specialized workloads
+* Apply advanced scheduling mechanisms: node affinity, taints/tolerations, and topology spread constraints
+* Leverage Node Feature Discovery labels for hardware-aware scheduling
+* Configure pod priority classes and understand preemption behavior
+* Understand pod descheduling strategies and the Descheduler Operator
+* Configure horizontal and vertical pod autoscaling
+* Recognize how HPA, VPA, and Descheduler can interact and potentially conflict
+* Optimize image distribution strategies using image pull policies and the Image Puller operator
+* Choose appropriate base images and understand their impact on deployment performance
+* Diagnose and resolve scheduling failures
+* Implement best practices for pod scheduling, scaling, and resource management

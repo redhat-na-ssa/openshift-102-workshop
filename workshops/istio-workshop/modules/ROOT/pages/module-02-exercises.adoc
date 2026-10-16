@@ -1,0 +1,882 @@
+= Module 2: Exercises
+:hardbreaks-option:
+
+This exercise section provides hands-on practice with Istio traffic management. You will learn how to configure Gateways, create VirtualServices with various routing patterns, implement path-based routing, perform weighted traffic splitting, and combine these components for complete traffic control.
+
+== Prerequisites
+
+Before starting these exercises, ensure you have:
+
+* Access to an OpenShift cluster with OpenShift Service Mesh {ossm_version} (Istio {istio_version}) installed
+* Your namespace (`$NAMESPACE`) configured with sidecar injection enabled (from Module 1)
+* The `oc` CLI tool installed and configured
+* Basic understanding of Kubernetes Services and Deployments
+
+== Exercise 1: Create and Configure a Gateway
+
+In this exercise, you will create a Gateway resource to allow external traffic into your service mesh.
+
+=== Step 1: Set Your Namespace
+
+Ensure your namespace variable is set:
+
+[source,bash,subs="attributes+"]
+----
+export NAMESPACE={user}-sandbox
+----
+
+Verify the namespace exists and has sidecar injection enabled:
+
+[source,bash]
+----
+oc get namespace $NAMESPACE --show-labels | grep istio.io/rev
+----
+
+The exercises send test requests with `oc exec` from the `curl-client` Deployment that you created in Module 1 (Exercise 1, Step 7). Check that it is running:
+
+[source,bash]
+----
+oc get deployment curl-client -n $NAMESPACE
+----
+
+=== Step 2: Deploy an Istio Ingress Gateway
+
+OpenShift Service Mesh 3 does not install an ingress gateway together with the control plane. Deploy one into your namespace with gateway injection: the `inject.istio.io/templates: gateway` annotation makes the sidecar injector configure the `istio-proxy` container as a gateway, and `image: auto` is replaced with the proxy image of your control plane revision:
+
+[source,bash,subs="attributes+"]
+----
+oc apply -f - <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: istio-ingressgateway
+  namespace: $NAMESPACE
+spec:
+  type: ClusterIP
+  selector:
+    istio: ingressgateway-{user}
+  ports:
+  - name: http2
+    port: 80
+    targetPort: 8080
+  - name: https
+    port: 443
+    targetPort: 8443
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: istio-ingressgateway
+  namespace: $NAMESPACE
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      istio: ingressgateway-{user}
+  template:
+    metadata:
+      annotations:
+        inject.istio.io/templates: gateway
+      labels:
+        istio: ingressgateway-{user}
+        app: istio-ingressgateway
+        sidecar.istio.io/inject: "true"
+    spec:
+      containers:
+      - name: istio-proxy
+        image: auto
+EOF
+----
+
+The gateway pods carry the label `istio: ingressgateway-{user}`, which is unique to you. By default, a Gateway resource selects its gateway pods by label in all namespaces, not only in its own namespace. If every attendee labeled their gateway pods `istio: ingressgateway`, each attendee's Gateway would also configure the gateway pods of all other attendees.
+
+Check that the Istio ingress gateway is running:
+
+[source,bash]
+----
+oc rollout status deployment/istio-ingressgateway -n $NAMESPACE
+oc get pods \
+  -n $NAMESPACE \
+  -l app=istio-ingressgateway
+----
+
+Note the service name and external access method:
+
+[source,bash]
+----
+oc get svc -n $NAMESPACE istio-ingressgateway
+----
+
+=== Step 3: Create a Basic Gateway
+
+Create a Gateway that accepts HTTP traffic on port 80. Its selector `istio: ingressgateway-{user}` matches only your gateway pods:
+
+[source,bash,subs="attributes+"]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: my-gateway
+  namespace: $NAMESPACE
+spec:
+  selector:
+    istio: ingressgateway-{user}
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "*"
+EOF
+----
+
+=== Step 4: Verify Gateway Creation
+
+Verify the Gateway was created successfully:
+
+[source,bash]
+----
+oc get gateways.networking.istio.io -n $NAMESPACE
+----
+
+NOTE: Use the full resource name `gateways.networking.istio.io`. On clusters that also have the Kubernetes Gateway API installed, `oc get gateway` lists `gateways.gateway.networking.k8s.io` instead and does not show the Istio Gateway.
+
+View the Gateway configuration:
+
+[source,bash]
+----
+oc get gateways.networking.istio.io my-gateway \
+  -n $NAMESPACE \
+  -o yaml
+----
+
+=== Step 5: Create a Gateway with HTTPS
+
+Create an additional Gateway that accepts HTTPS traffic on port 443:
+
+[source,bash,subs="attributes+"]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: my-https-gateway
+  namespace: $NAMESPACE
+spec:
+  selector:
+    istio: ingressgateway-{user}
+  servers:
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: my-tls-secret
+    hosts:
+    - "myapp-{user}.example.com"
+EOF
+----
+
+NOTE: In a production environment, you would need to create the TLS secret referenced in the Gateway configuration. The host names in this module contain your username (`myapp-{user}.example.com`) so that they do not collide with the hosts of other attendees on a shared cluster.
+
+== Exercise 2: Create VirtualServices with Basic Routing
+
+In this exercise, you will create VirtualServices to route traffic to your services.
+
+=== Step 1: Deploy Sample Applications
+
+Deploy two sample applications to use for routing:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: frontend
+        version: v1
+    spec:
+      containers:
+      - name: nginx
+        image: quay.io/nginx/nginx-unprivileged:latest
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: frontend
+  ports:
+  - port: 80
+    targetPort: 8080
+    name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: backend
+        version: v1
+    spec:
+      containers:
+      - name: nginx
+        image: quay.io/nginx/nginx-unprivileged:latest
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: backend
+  ports:
+  - port: 80
+    targetPort: 8080
+    name: http
+EOF
+----
+
+Wait for the pods to be ready:
+
+[source,bash]
+----
+oc get pods \
+  -n $NAMESPACE \
+  -l app=frontend
+
+oc get pods \
+  -n $NAMESPACE \
+  -l app=backend
+----
+
+=== Step 2: Create a Basic VirtualService
+
+Create a VirtualService that routes all traffic to the frontend service:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: frontend
+  namespace: ${NAMESPACE}
+spec:
+  hosts:
+  - frontend
+  http:
+  - route:
+    - destination:
+        host: frontend
+      weight: 100
+EOF
+----
+
+=== Step 3: Verify VirtualService
+
+Check that the VirtualService was created:
+
+[source,bash]
+----
+oc get virtualservice -n $NAMESPACE
+----
+
+View the VirtualService configuration:
+
+[source,bash]
+----
+oc get virtualservice frontend \
+  -n $NAMESPACE \
+  -o yaml
+----
+
+=== Step 4: Test Internal Routing
+
+Test that the VirtualService routes traffic correctly by sending a request from within the cluster:
+
+[source,bash]
+----
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -v http://frontend
+----
+
+== Exercise 3: Implement Path-Based Routing
+
+In this exercise, you will create a VirtualService that routes traffic based on URI paths.
+
+=== Step 1: Create a Path-Based VirtualService
+
+Create a VirtualService that routes different paths to different services:
+
+[source,bash,subs="attributes+"]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: myapp
+  namespace: $NAMESPACE
+spec:
+  hosts:
+  - myapp-{user}.example.com
+  gateways:
+  - my-gateway
+  http:
+  - match:
+    - uri:
+        prefix: "/api"
+    route:
+    - destination:
+        host: backend
+      weight: 100
+  - match:
+    - uri:
+        prefix: "/"
+    route:
+    - destination:
+        host: frontend
+      weight: 100
+EOF
+----
+
+This VirtualService:
+
+* Routes requests to `/api/*` to the backend service
+* Routes all other requests to the frontend service
+
+=== Step 2: Verify Path-Based Routing
+
+Check the VirtualService configuration:
+
+[source,bash]
+----
+oc get virtualservice myapp \
+  -n $NAMESPACE \
+  -o yaml
+----
+
+=== Step 3: Test Path-Based Routing
+
+Get the ingress gateway external address:
+
+[source,bash]
+----
+INGRESS_HOST=$(oc get svc \
+  -n $NAMESPACE \
+  istio-ingressgateway \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+echo $INGRESS_HOST
+----
+
+If no external address is available, you can use port-forwarding:
+
+[source,bash]
+----
+oc port-forward -n $NAMESPACE svc/istio-ingressgateway 8080:80 &
+----
+
+Test the frontend route:
+
+[source,bash,subs="attributes+"]
+----
+curl -H "Host: myapp-{user}.example.com" http://localhost:8080/
+----
+
+Test the backend API route:
+
+[source,bash,subs="attributes+"]
+----
+curl -H "Host: myapp-{user}.example.com" http://localhost:8080/api
+----
+
+The backend is a plain NGINX server with no `/api` page, so this returns `404 Not Found` from the backend. The 404 page comes from NGINX, which shows that the request was routed to the backend.
+
+=== Step 4: Create More Complex Path Matching
+
+Create a VirtualService with multiple path patterns:
+
+[source,bash,subs="attributes+"]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: complex-routing
+  namespace: $NAMESPACE
+spec:
+  hosts:
+  - complex-{user}.example.com
+  gateways:
+  - my-gateway
+  http:
+  - match:
+    - uri:
+        exact: "/api/v1/users"
+    route:
+    - destination:
+        host: backend
+      weight: 100
+  - match:
+    - uri:
+        prefix: "/api/v2"
+    route:
+    - destination:
+        host: backend
+      weight: 100
+  - match:
+    - uri:
+        regex: '^/static/.*\.(jpg|png|gif)$'
+    route:
+    - destination:
+        host: frontend
+      weight: 100
+  - route:
+    - destination:
+        host: frontend
+      weight: 100
+EOF
+----
+
+This example demonstrates:
+
+* Exact path matching (`/api/v1/users`)
+* Prefix matching (`/api/v2/*`)
+* Regex matching (static image files)
+* Default route (catch-all)
+
+== Exercise 4: Implement Weighted Traffic Splitting
+
+In this exercise, you will implement weighted traffic splitting for canary deployments.
+
+=== Step 1: Deploy Multiple Versions
+
+Deploy a second version of the frontend application:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-v2
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: frontend
+        version: v2
+    spec:
+      containers:
+      - name: nginx
+        image: quay.io/nginx/nginx-unprivileged:latest
+        ports:
+        - containerPort: 8080
+EOF
+----
+
+Wait for the new pods to be ready:
+
+[source,bash]
+----
+oc get pods \
+  -n $NAMESPACE \
+  -l app=frontend
+----
+
+=== Step 2: Create DestinationRule with Subsets
+
+Create a DestinationRule to define service subsets (versions):
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: frontend
+  namespace: ${NAMESPACE}
+spec:
+  host: frontend
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+  - name: v2
+    labels:
+      version: v2
+EOF
+----
+
+Verify the DestinationRule:
+
+[source,bash]
+----
+oc get destinationrule -n $NAMESPACE
+oc get destinationrule frontend \
+  -n $NAMESPACE \
+  -o yaml
+----
+
+=== Step 3: Create VirtualService with Weighted Splitting
+
+Update the `frontend` VirtualService from Exercise 2 so that it splits traffic 90% to v1 and 10% to v2:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: frontend
+  namespace: ${NAMESPACE}
+spec:
+  hosts:
+  - frontend
+  http:
+  - route:
+    - destination:
+        host: frontend
+        subset: v1
+      weight: 90
+    - destination:
+        host: frontend
+        subset: v2
+      weight: 10
+EOF
+----
+
+NOTE: Define the routes for a host in a single VirtualService. If a second VirtualService (for example `frontend-canary`) also defines the host `frontend` for sidecars, Istio applies only one of them, and `istioctl analyze` reports `IST0109`.
+
+=== Step 4: Test Weighted Traffic Splitting
+
+Send multiple requests and observe the traffic distribution. You can check the Envoy access logs (enabled in Module 1, Exercise 2, Step 6) to see which version receives each request:
+
+[source,bash]
+----
+for i in {1..20}; do
+  oc exec \
+    -n $NAMESPACE \
+    deploy/curl-client \
+    -c curl -- \
+    curl -s http://frontend > /dev/null
+done
+----
+
+Check the logs to see traffic distribution:
+
+[source,bash]
+----
+oc logs \
+  -n $NAMESPACE \
+  -l app=frontend,version=v1 \
+  -c istio-proxy \
+  --tail=10
+
+oc logs \
+  -n $NAMESPACE \
+  -l app=frontend,version=v2 \
+  -c istio-proxy \
+  --tail=10
+----
+
+=== Step 5: Adjust Traffic Weights
+
+Update the VirtualService to increase traffic to v2 (50/50 split):
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: frontend
+  namespace: ${NAMESPACE}
+spec:
+  hosts:
+  - frontend
+  http:
+  - route:
+    - destination:
+        host: frontend
+        subset: v1
+      weight: 50
+    - destination:
+        host: frontend
+        subset: v2
+      weight: 50
+EOF
+----
+
+=== Step 6: Complete Canary Deployment
+
+Finally, route 100% of traffic to v2:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: frontend
+  namespace: ${NAMESPACE}
+spec:
+  hosts:
+  - frontend
+  http:
+  - route:
+    - destination:
+        host: frontend
+        subset: v2
+      weight: 100
+EOF
+----
+
+== Exercise 5: Combine Gateway and VirtualService
+
+In this exercise, you will combine a Gateway and VirtualService to provide complete external access to your services.
+
+=== Step 1: Create a Complete Gateway Configuration
+
+Ensure you have a Gateway that accepts traffic for your application:
+
+[source,bash]
+----
+oc get gateways.networking.istio.io my-gateway -n $NAMESPACE
+----
+
+If it doesn't exist, create it:
+
+[source,bash,subs="attributes+"]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: my-gateway
+  namespace: $NAMESPACE
+spec:
+  selector:
+    istio: ingressgateway-{user}
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "myapp-{user}.example.com"
+EOF
+----
+
+=== Step 2: Create VirtualService for Gateway
+
+Create a VirtualService that works with the Gateway to route external traffic:
+
+[source,bash,subs="attributes+"]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: myapp-external
+  namespace: $NAMESPACE
+spec:
+  hosts:
+  - myapp-{user}.example.com
+  gateways:
+  - my-gateway
+  http:
+  - match:
+    - uri:
+        prefix: "/api"
+    route:
+    - destination:
+        host: backend
+        port:
+          number: 80
+      weight: 100
+  - route:
+    - destination:
+        host: frontend
+        port:
+          number: 80
+      weight: 100
+EOF
+----
+
+=== Step 3: Verify Gateway and VirtualService Integration
+
+Check both resources:
+
+[source,bash]
+----
+oc get gateways.networking.istio.io,virtualservice -n $NAMESPACE
+----
+
+View the complete configuration:
+
+[source,bash]
+----
+oc get gateways.networking.istio.io my-gateway \
+  -n $NAMESPACE \
+  -o yaml
+
+oc get virtualservice myapp-external \
+  -n $NAMESPACE \
+  -o yaml
+----
+
+=== Step 4: Test External Access
+
+Get the ingress gateway address:
+
+[source,bash]
+----
+INGRESS_HOST=$(oc get svc \
+  -n $NAMESPACE \
+  istio-ingressgateway \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+INGRESS_PORT=$(oc get svc \
+  -n $NAMESPACE \
+  istio-ingressgateway \
+  -o jsonpath='{.spec.ports[?(@.name=="http2")].port}')
+----
+
+If using port-forwarding and the port-forward from Exercise 3 is no longer running, start it again (if it is still running, this command fails with `address already in use`, and you can keep using the existing one):
+
+[source,bash]
+----
+oc port-forward -n $NAMESPACE svc/istio-ingressgateway 8080:80 &
+----
+
+Test the frontend:
+
+[source,bash,subs="attributes+"]
+----
+curl -H "Host: myapp-{user}.example.com" http://localhost:8080/
+----
+
+Test the API:
+
+[source,bash,subs="attributes+"]
+----
+curl -H "Host: myapp-{user}.example.com" http://localhost:8080/api
+----
+
+=== Step 5: Add Header-Based Routing
+
+Enhance the VirtualService to include header-based routing:
+
+[source,bash,subs="attributes+"]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: myapp-external
+  namespace: $NAMESPACE
+spec:
+  hosts:
+  - myapp-{user}.example.com
+  gateways:
+  - my-gateway
+  http:
+  - match:
+    - headers:
+        x-canary:
+          exact: "true"
+    route:
+    - destination:
+        host: frontend
+        subset: v2
+      weight: 100
+  - match:
+    - uri:
+        prefix: "/api"
+    route:
+    - destination:
+        host: backend
+        port:
+          number: 80
+      weight: 100
+  - route:
+    - destination:
+        host: frontend
+        port:
+          number: 80
+      weight: 100
+EOF
+----
+
+Test with the canary header:
+
+[source,bash,subs="attributes+"]
+----
+curl \
+  -H "Host: myapp-{user}.example.com" \
+  -H "x-canary: true" \
+  http://localhost:8080/
+----
+
+== Summary
+
+In these exercises, you have:
+
+* Created and configured Gateways to accept external traffic
+* Created VirtualServices with basic routing patterns
+* Implemented path-based routing to direct traffic based on URI paths
+* Configured weighted traffic splitting for canary deployments
+* Combined Gateways and VirtualServices for complete external traffic management
+* Used DestinationRules to define service subsets for version-based routing
+
+These skills form the foundation of Istio traffic management and are essential for implementing advanced deployment strategies in production environments.
+
+== Troubleshooting
+
+If you encounter issues:
+
+* *Gateway not accepting traffic*: Verify the Gateway selector (`istio: ingressgateway-{user}`) matches the labels of your ingress gateway pods and check that the gateway pods are running
+* *VirtualService not routing*: Ensure the VirtualService hosts match the Gateway hosts, and verify the destination services exist
+* *Traffic not splitting correctly*: Check that DestinationRule subsets match the pod labels, and verify the weight percentages sum to 100
+* *External access not working*: Verify the ingress gateway service has an external IP or use port-forwarding for testing
+* *Path matching not working*: Check the match conditions are correct and that routes are ordered properly (most specific first)

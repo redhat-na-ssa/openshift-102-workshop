@@ -1,0 +1,192 @@
+= Exercises
+:hardbreaks-option:
+
+== Exercise 1: Basic Label Filtering
+
+In this exercise, you will practice writing queries with label selectors to filter metrics in your OpenShift cluster.
+
+=== Step 1: Access Prometheus
+
+Run the queries in these exercises in the OpenShift web console under *Observe* -> *Metrics* in the *Administrator* perspective; this needs the `cluster-monitoring-view` role from xref:setup-requirements.adoc[Setup Requirements]. Alternatively, if you are a cluster administrator, you can use the Prometheus UI through a port-forward (regular users are not allowed to create port-forwards in the `openshift-monitoring` namespace):
+
+1. Open a terminal and authenticate to your OpenShift cluster:
++
+[source,bash]
+----
+oc login <your-cluster-url>
+----
+
+2. Port-forward to a Prometheus pod:
++
+[source,bash]
+----
+oc port-forward -n openshift-monitoring pod/prometheus-k8s-0 9090:9090
+----
+
+3. Open your browser and navigate to `http://localhost:9090/graph` (on Prometheus 3.x, use `http://localhost:9090/query`; the bare `http://localhost:9090` redirects to a path that returns 404 through the port-forward)
+
+=== Step 2: Query Container Memory Usage
+
+Write a query to find all container memory usage metrics in the `openshift-monitoring` namespace:
+
+[source,promql]
+----
+container_memory_usage_bytes{namespace="openshift-monitoring"}
+----
+
+Execute this query and observe the results.
+
+=== Step 3: Filter by Pod Pattern
+
+Modify the query to only show metrics for pods whose names start with "prometheus-":
+
+[source,promql]
+----
+container_memory_usage_bytes{
+  namespace="openshift-monitoring",
+  pod=~"^prometheus-.*"
+}
+----
+
+=== Step 4: Exclude System Namespaces
+
+Write a query to show container CPU usage for all namespaces except system namespaces:
+
+[source,promql]
+----
+container_cpu_usage_seconds_total{namespace!~"kube-.*|openshift-.*"}
+----
+
+== Exercise 2: Regular Expression Patterns
+
+Practice using regular expressions to match patterns in label values. The pod and deployment names in these steps are examples; if nothing in your cluster matches, adjust the patterns to your own pod names.
+
+=== Step 1: Match Version Numbers in a Label
+
+Version numbers are best matched in a label that carries a version, not in pod names: the pods of a Deployment end in a random suffix such as `-7d9f8b6c5d-v2xkq`, so a pattern like `.*-v[0-9]+.*` on the `pod` label also matches pods without any version in their name.
+
+`kube_node_info` has a `kubelet_version` label, for example `v1.29.6+aa3bc52`. Write a query that finds all nodes whose kubelet runs a Kubernetes 1.x release (`\\.` matches a literal dot inside a PromQL string):
+
+[source,promql]
+----
+kube_node_info{kubelet_version=~"v1\\.[0-9]+\\..*"}
+----
+
+Then narrow the pattern to the minor version that your cluster runs, for example `v1\\.29\\..*`. You can find it in the `kubelet_version` label of `kube_node_info`.
+
+=== Step 2: Match Specific Deployment Pattern
+
+Find all pods that belong to deployments with names matching the pattern "app-*-prod". `kube_pod_info` has no `deployment` label, but a Deployment's pods are created by a ReplicaSet named `<deployment>-<hash>`:
+
+[source,promql]
+----
+kube_pod_info{
+  created_by_kind="ReplicaSet",
+  created_by_name=~"app-.*-prod-.*"
+}
+----
+
+=== Step 3: Exclude Test and Dev Environments
+
+Write a query to show container memory usage excluding test and development namespaces:
+
+[source,promql]
+----
+container_memory_usage_bytes{namespace!~".*-test|.*-dev"}
+----
+
+== Exercise 3: Combining Multiple Filters
+
+Practice combining multiple label selectors and operators.
+
+=== Step 1: Filter by Multiple Conditions
+
+Write a query to find container memory usage in the "openshift-monitoring" namespace for containers with names starting with "kube-rbac-proxy":
+
+[source,promql]
+----
+container_memory_usage_bytes{
+  namespace="openshift-monitoring",
+  container=~"^kube-rbac-proxy.*"
+}
+----
+
+=== Step 2: Use Comparison Operators
+
+Find all containers using more than 500MB of memory (`container!=""` and `container!="POD"` skip the per-pod and pause-container series):
+
+[source,promql]
+----
+container_memory_usage_bytes{
+  container!="",
+  container!="POD"
+} > 524288000
+----
+
+=== Step 3: Combine Filters and Comparisons
+
+Find containers in the "openshift-monitoring" namespace using more than 1GB of memory:
+
+[source,promql]
+----
+container_memory_usage_bytes{
+  namespace="openshift-monitoring",
+  container!="",
+  container!="POD"
+} > 1073741824
+----
+
+== Exercise 4: OpenShift-Specific Queries
+
+Practice writing queries using OpenShift-specific labels and metrics.
+
+=== Step 1: Query Pod Information
+
+List all pods in a specific namespace with their node assignments:
+
+[source,promql]
+----
+kube_pod_info{namespace="your-namespace"}
+----
+
+Replace "your-namespace" with an actual namespace in your cluster.
+
+=== Step 2: Filter by Node
+
+Find all pods running on a specific node:
+
+[source,promql]
+----
+kube_pod_info{node="<node-name>"}
+----
+
+Replace `<node-name>` with an actual node name from your cluster. Workshop users cannot run `oc get nodes`, so list the node names with a query instead:
+
+[source,promql]
+----
+kube_node_info
+----
+
+The `node` label of each result is a node name.
+
+=== Step 3: Query Build Information
+
+Query the current phase of each OpenShift build in a specific namespace. `openshift_build_status_phase_total` has one series per build and phase, and the series for the build's current phase has the value 1:
+
+[source,promql]
+----
+openshift_build_status_phase_total{namespace="your-namespace"} == 1
+----
+
+This query returns data only if the namespace contains builds.
+
+== Verification
+
+After completing these exercises, verify your understanding:
+
+* Can you write a query that filters metrics by multiple labels?
+* Can you use regular expressions to match patterns?
+* Can you exclude specific values using negative operators?
+* Can you combine filters with comparison operators?
+
+If you can answer yes to all these questions, you are ready to proceed to the next module on aggregation functions.

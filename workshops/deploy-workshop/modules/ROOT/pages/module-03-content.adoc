@@ -1,0 +1,487 @@
+= Pod Descheduling and Scaling
+:hardbreaks-option:
+
+This module explores how Kubernetes manages pod lifecycle beyond initial scheduling, including descheduling pods to optimize cluster utilization, and automatic scaling mechanisms that adjust workloads based on demand. Understanding these mechanisms is crucial for maintaining efficient and responsive applications.
+
+== Understanding Descheduling
+
+Descheduling is the process of removing pods from nodes to improve cluster balance and resource utilization. Unlike eviction, which is driven by resource pressure, descheduling is a proactive optimization mechanism.
+
+=== Descheduling vs. Eviction
+
+It's important to distinguish between descheduling and eviction:
+
+* **Eviction**: Reactive removal of pods, for example by the kubelet when a node runs low on memory or disk (node-pressure eviction), by the scheduler when it preempts lower-priority pods (see Module 1), or by a `NoExecute` taint (see Module 2)
+* **Descheduling**: Proactive removal of pods to optimize cluster balance and utilization
+
+Descheduling typically moves pods to better-suited nodes, while eviction may terminate pods entirely.
+
+=== Descheduling Behavior
+
+IMPORTANT: Descheduling does not happen by default in Kubernetes. The default scheduler only places pods; it does not move them after placement. To enable descheduling, you need a descheduler component that actively monitors and rebalances pods.
+
+The descheduler evaluates running pods and identifies opportunities to improve cluster balance by:
+
+* Moving pods from over-utilized nodes to under-utilized nodes
+* Consolidating pods to free up nodes for maintenance
+* Spreading pods more evenly across nodes
+* Removing duplicate pods when anti-affinity rules are violated
+
+=== Descheduler Operator Profiles
+
+The Descheduler Operator provides nine predefined profiles that combine various descheduling strategies. Each profile is designed to address specific cluster optimization scenarios. Profiles are configured through the Descheduler custom resource as documented in the https://github.com/openshift/cluster-kube-descheduler-operator[OpenShift Descheduler Operator repository].
+
+The available profiles are:
+
+* AffinityAndTaints
+* TopologyAndDuplicates
+* SoftTopologyAndDuplicates
+* LifecycleAndUtilization
+* LongLifecycle
+* CompactAndScale
+* KubeVirtRelieveAndMigrate
+* EvictPodsWithPVC
+* EvictPodsWithLocalStorage
+
+=== Descheduler Operator Configuration
+
+The Descheduler Operator is configured through a Descheduler custom resource. The operator runs as a controller that periodically evaluates the cluster and deschedules pods when conditions are met. Configuration typically includes:
+
+* **Descheduling interval**: How often to evaluate pods for descheduling
+* **Strategy parameters**: Thresholds and rules for each enabled strategy
+* **Namespaces to include/exclude**: Scope of descheduling operations (`profileCustomizations.namespaces`). The `LowNodeUtilization` strategy in the `LifecycleAndUtilization` profile does not support an include list: when you set one, that strategy still considers every namespace except the protected `openshift-*`, `kube-system` and `hypershift` namespaces
+
+Example Descheduler configuration using profiles:
+
+[source,yaml]
+----
+apiVersion: operator.openshift.io/v1
+kind: KubeDescheduler
+metadata:
+  name: cluster
+  namespace: openshift-kube-descheduler-operator
+spec:
+  managementState: Managed
+  deschedulingIntervalSeconds: 3600
+  profiles:
+  - LifecycleAndUtilization
+  - AffinityAndTaints
+  mode: Automatic
+  evictionLimits:
+    total: 10
+    node: 5
+----
+
+Key configuration parameters:
+
+* `profiles`: List of profile names to enable (choose from the nine available profiles)
+* `deschedulingIntervalSeconds`: How often the descheduler runs
+* `mode`: Either `Predictive` (simulation only) or `Automatic` (actual evictions)
+* `evictionLimits`: Restrict the number of evictions per run
+
+=== Monitoring Descheduling
+
+Monitor descheduling operations to understand cluster optimization:
+
+[source,bash]
+----
+# View Descheduler Operator status
+oc get kubedescheduler -n openshift-kube-descheduler-operator
+
+# View detailed Descheduler configuration
+oc describe kubedescheduler cluster \
+  -n openshift-kube-descheduler-operator
+
+# View descheduler operator logs
+oc logs \
+  -n openshift-kube-descheduler-operator \
+  -l name=descheduler-operator
+
+# Check for descheduled pods
+oc get events \
+  --field-selector reportingComponent=sigs.k8s.io.descheduler
+
+# Monitor pod movements
+oc get pods -o wide --watch
+----
+
+NOTE: The descheduler records an event on each pod it evicts. The event reason is the name of the strategy that evicted the pod (for example, `RemovePodsViolatingInterPodAntiAffinity`), not `Descheduled`. Events are recorded only in `Automatic` mode; in `Predictive` mode the descheduler only logs the evictions it would perform. The descheduler also needs at least two ready nodes: on a single-node cluster it skips every descheduling cycle and evicts nothing.
+
+== Horizontal Pod Autoscaler (HPA)
+
+Horizontal Pod Autoscaler automatically scales the number of pod replicas based on observed metrics such as CPU utilization, memory usage, or custom metrics.
+
+=== How HPA Works
+
+HPA monitors specified metrics and adjusts the replica count of a Deployment, StatefulSet, or other scalable resource:
+
+1. **Metrics Collection**: HPA queries metrics from the Metrics API
+2. **Target Calculation**: Compares current metrics to target values
+3. **Replica Adjustment**: Increases or decreases replicas to meet targets
+4. **Cooldown Periods**: Respects scale-up and scale-down delays to prevent thrashing
+
+=== Creating an HPA
+
+Create an HPA to automatically scale a deployment:
+
+[source,yaml]
+----
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web-deployment
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 4
+        periodSeconds: 15
+      selectPolicy: Max
+----
+
+Key parameters:
+
+* `minReplicas`: Minimum number of replicas to maintain
+* `maxReplicas`: Maximum number of replicas allowed
+* `metrics`: Metrics to monitor and target values
+* `behavior`: Scaling behavior including stabilization windows and policies
+
+=== HPA Metrics
+
+HPA supports various metric types:
+
+==== Resource Metrics
+
+Scale based on CPU or memory utilization:
+
+[source,yaml]
+----
+metrics:
+- type: Resource
+  resource:
+    name: cpu
+    target:
+      type: Utilization
+      averageUtilization: 70
+----
+
+==== Custom Metrics
+
+Scale based on custom application metrics:
+
+[source,yaml]
+----
+metrics:
+- type: Pods
+  pods:
+    metric:
+      name: requests_per_second
+    target:
+      type: AverageValue
+      averageValue: "100"
+----
+
+==== Object Metrics
+
+Scale based on metrics from other Kubernetes objects:
+
+[source,yaml]
+----
+metrics:
+- type: Object
+  object:
+    metric:
+      name: requests-per-second
+    describedObject:
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      name: main-route
+    target:
+      type: Value
+      value: "2000"
+----
+
+=== HPA Behavior Configuration
+
+Control how HPA scales with behavior settings:
+
+[source,yaml]
+----
+behavior:
+  scaleDown:
+    stabilizationWindowSeconds: 300
+    policies:
+    - type: Percent
+      value: 50
+      periodSeconds: 60
+  scaleUp:
+    stabilizationWindowSeconds: 0
+    policies:
+    - type: Percent
+      value: 100
+      periodSeconds: 15
+    selectPolicy: Max
+----
+
+* `stabilizationWindowSeconds`: Time window to consider historical metrics
+* `policies`: Scaling policies (Percent or Pods)
+* `selectPolicy`: How to select among multiple policies (Max, Min, Disabled)
+
+=== Monitoring HPA
+
+Monitor HPA behavior and scaling decisions:
+
+[source,bash]
+----
+# View HPA status
+oc get hpa web-hpa
+
+# Get detailed HPA information
+oc describe hpa web-hpa
+
+# View HPA events
+oc get events --field-selector involvedObject.name=web-hpa
+----
+
+== Vertical Pod Autoscaler (VPA)
+
+Vertical Pod Autoscaler automatically adjusts CPU and memory requests and limits for containers based on historical usage data.
+
+=== How VPA Works
+
+VPA monitors pod resource usage and recommends or automatically updates resource requests and limits:
+
+1. **Metrics Collection**: Collects resource usage metrics from pods
+2. **Analysis**: Analyzes historical usage patterns
+3. **Recommendations**: Generates resource recommendations
+4. **Updates**: Optionally updates pod specifications automatically
+
+=== VPA Modes
+
+VPA operates in different modes:
+
+* **Off**: VPA only provides recommendations, doesn't make changes
+* **Initial**: VPA sets resource requests on pod creation only
+* **Auto**: Deprecated; currently equivalent to `Recreate`, and the API returns a deprecation warning when you use it
+* **Recreate**: VPA recreates pods to apply new resource settings
+* **InPlaceOrRecreate**: VPA resizes running pods in place where possible and recreates them otherwise. This mode was added upstream in VPA 1.4 and relies on Kubernetes in-place pod resize; whether you can use it depends on the VPA Operator version in your cluster
+
+=== Creating a VPA
+
+Create a VPA to manage resource requests:
+
+[source,yaml]
+----
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: web-vpa
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web-deployment
+  updatePolicy:
+    updateMode: "Recreate"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: app
+      minAllowed:
+        cpu: 100m
+        memory: 128Mi
+      maxAllowed:
+        cpu: 2
+        memory: 4Gi
+      controlledResources: ["cpu", "memory"]
+----
+
+Key parameters:
+
+* `updateMode`: How VPA applies recommendations (Off, Initial, Recreate, InPlaceOrRecreate; Auto is deprecated)
+* `minAllowed`: Minimum resource values to set
+* `maxAllowed`: Maximum resource values to set
+* `controlledResources`: Which resources VPA should manage
+
+=== VPA Recommendations
+
+View VPA recommendations:
+
+[source,bash]
+----
+# View VPA status and recommendations
+oc get vpa web-vpa -o yaml
+
+# Get recommendation details
+oc describe vpa web-vpa
+----
+
+VPA recommendations include:
+
+* **Target**: Recommended values for optimal performance
+* **Lower Bound**: Minimum values to maintain performance
+* **Upper Bound**: Maximum recommended values
+* **Uncapped Target**: Recommendations without min/max constraints
+
+=== VPA Resource Policies
+
+Control which containers VPA manages:
+
+[source,yaml]
+----
+resourcePolicy:
+  containerPolicies:
+  - containerName: app
+    mode: Auto
+    minAllowed:
+      cpu: 100m
+      memory: 128Mi
+    maxAllowed:
+      cpu: 2
+      memory: 4Gi
+  - containerName: sidecar
+    mode: "Off"
+----
+
+=== VPA Limitations
+
+Important considerations when using VPA:
+
+* In `Recreate` mode, VPA applies new resource values by evicting pods so they are recreated. The newer `InPlaceOrRecreate` mode can resize running pods without recreating them, but falls back to recreating a pod when an in-place resize is not possible; check that the VPA Operator in your cluster supports it before relying on it
+* VPA recommendations are based on historical data and may not reflect sudden changes
+* Using VPA with HPA requires careful coordination
+* VPA may cause pod churn when updating resources
+
+== Interaction Between Components
+
+WARNING: Descheduling, Horizontal Pod Autoscaler (HPA), and Vertical Pod Autoscaler (VPA) can interfere with each other if all are deployed simultaneously. Understanding their interactions is crucial for stable cluster operation.
+
+=== Potential Conflicts
+
+==== HPA and VPA
+
+HPA and VPA both manage pod resources but in different ways:
+
+* **HPA**: Changes replica count based on resource utilization
+* **VPA**: Changes resource requests/limits per pod
+
+If both are active on the same workload:
+
+* VPA may adjust resource requests, affecting utilization percentages that HPA monitors
+* HPA may scale replicas up/down, changing the workload that VPA analyzes
+* This can create feedback loops and unstable scaling behavior
+
+Best practice: Use either HPA or VPA for a given workload, not both simultaneously.
+
+==== Descheduler and HPA
+
+Descheduler and HPA can conflict:
+
+* **Descheduler**: Moves pods to optimize cluster balance
+* **HPA**: Scales replica count based on metrics
+
+Potential issues:
+
+* Descheduler may move pods that HPA is monitoring, affecting metrics
+* HPA scaling decisions may conflict with descheduler's rebalancing efforts
+* Rapid scaling combined with descheduling can cause pod churn
+
+==== Descheduler and VPA
+
+Descheduler and VPA interactions:
+
+* **Descheduler**: Moves pods between nodes
+* **VPA**: Updates pod resource specifications
+
+Potential issues:
+
+* VPA may recommend resource changes that trigger descheduling
+* Descheduler may move pods that VPA is analyzing
+* Pod recreation from VPA updates can interfere with descheduling decisions
+
+=== Coordination Strategies
+
+If you need to use multiple components:
+
+==== Use HPA with Descheduler
+
+* Configure HPA with longer stabilization windows to reduce rapid scaling
+* Set descheduler to run less frequently
+* Use descheduler strategies that don't conflict with HPA metrics
+
+==== Use VPA in Recommendation Mode
+
+* Run VPA in "Off" mode to get recommendations without automatic updates
+* Manually review and apply recommendations during maintenance windows
+* Avoid using VPA Auto mode with descheduler
+
+==== Separate Workloads
+
+* Use HPA for stateless workloads that benefit from horizontal scaling
+* Use VPA for stateful workloads or workloads that can't scale horizontally
+* Use descheduler for cluster optimization, not workload-specific scaling
+
+=== Monitoring Interactions
+
+Monitor all components to detect conflicts:
+
+[source,bash]
+----
+# Monitor HPA scaling events
+oc get events \
+  --field-selector involvedObject.kind=HorizontalPodAutoscaler
+
+# Monitor VPA recommendations in your project
+oc get vpa
+
+# Monitor descheduler activity
+oc logs \
+  -n openshift-kube-descheduler-operator \
+  -l app=descheduler
+
+# Watch pod churn
+oc get pods -w
+----
+
+== Best Practices
+
+* Use HPA for workloads that can scale horizontally (stateless applications)
+* Use VPA for workloads that need resource optimization but can't scale horizontally
+* Avoid using HPA and VPA on the same workload simultaneously
+* Configure descheduler with appropriate intervals to avoid excessive pod movement
+* Set HPA stabilization windows to prevent rapid scaling oscillations
+* Monitor all autoscaling components to detect conflicts early
+* Test autoscaling configurations in non-production environments first
+* Use Pod Disruption Budgets to protect critical workloads during scaling operations
+* Review VPA recommendations before enabling Auto mode
+* Coordinate descheduling with application maintenance windows when possible
+

@@ -1,0 +1,387 @@
+= Exercises
+:hardbreaks-option:
+
+These exercises require the Grafana Operator, which a cluster administrator installs as described in xref:setup-requirements.adoc[Setup Requirements]. The panels based on the sample application use the application, the `ServiceMonitor` and the `PrometheusRule` from the Module 5 exercises. Run the commands in your workshop project:
+
+[source,bash]
+----
+NS=$(oc project -q)
+----
+
+== Exercise 1: Deploy Grafana
+
+In this exercise, you will create a Grafana instance in your project and log in to it.
+
+=== Step 1: Check Your Permissions
+
+[source,bash]
+----
+oc auth can-i create grafanas.grafana.integreatly.org -n "$NS"
+----
+
+If the command prints `no`, the Grafana Operator is not installed, or you are not an administrator or editor of the project. Ask your cluster administrator.
+
+=== Step 2: Create the Grafana Instance
+
+[source,bash]
+----
+oc apply \
+  -n "$NS" \
+  -f - <<'EOF'
+apiVersion: grafana.integreatly.org/v1beta1
+kind: Grafana
+metadata:
+  name: grafana
+  labels:
+    dashboards: grafana
+spec:
+  route:
+    spec:
+      tls:
+        termination: edge
+        insecureEdgeTerminationPolicy: Redirect
+  config:
+    log:
+      mode: console
+EOF
+----
+
+Wait until the operator has created the deployment and Grafana is running:
+
+[source,bash]
+----
+oc get grafana grafana -n "$NS"
+oc get pods \
+  -n "$NS" \
+  -l app=grafana
+----
+
+The `STAGE STATUS` column of the `Grafana` resource shows `success`, and the Grafana pod is `Running`.
+While Grafana is starting, the resource can show `failed` for a minute or two, because the operator cannot reach Grafana yet; check again after a few minutes.
+
+=== Step 3: Log In
+
+[source,bash]
+----
+echo "https://$(oc get route grafana-route \
+  -n "$NS" \
+  -o jsonpath='{.spec.host}')"
+
+oc extract secret/grafana-admin-credentials \
+  -n "$NS" \
+  --to=-
+----
+
+Open the URL in your browser and log in with the values of `GF_SECURITY_ADMIN_USER` and `GF_SECURITY_ADMIN_PASSWORD`. Grafana has no data sources and no dashboards yet.
+
+== Exercise 2: Connect Grafana to the Metrics of Your Project
+
+Practice configuring a data source for the Thanos Querier tenancy port.
+
+=== Step 1: Create the Service Account and Its Token
+
+[source,bash]
+----
+oc create serviceaccount grafana-thanos -n "$NS"
+oc create rolebinding grafana-thanos-view \
+  -n "$NS" \
+  --clusterrole=view \
+  --serviceaccount="$NS:grafana-thanos"
+
+oc apply \
+  -n "$NS" \
+  -f - <<'EOF'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-thanos-token
+  annotations:
+    kubernetes.io/service-account.name: grafana-thanos
+type: kubernetes.io/service-account-token
+EOF
+----
+
+Check that OpenShift has filled the secret. The command lists the keys `ca.crt`, `namespace`, `service-ca.crt` and `token`:
+
+[source,bash]
+----
+oc describe secret grafana-thanos-token -n "$NS"
+----
+
+=== Step 2: Test the Token
+
+Before you configure Grafana, check that the token can query the tenancy port. Run the query from the `api-client` pod of Module 1 (recreate it as shown there if it no longer exists):
+
+[source,bash]
+----
+SA_TOKEN=$(oc get secret grafana-thanos-token \
+  -n "$NS" \
+  -o jsonpath='{.data.token}' |
+  base64 -d)
+
+oc exec -n "$NS" api-client -- curl -sk -G \
+  -H "Authorization: Bearer $SA_TOKEN" \
+  --data-urlencode "namespace=$NS" \
+  --data-urlencode 'query=up' \
+  https://thanos-querier.openshift-monitoring.svc:9092/api/v1/query
+----
+
+The response has `"status":"success"`. If it is `Forbidden`, check the role binding from Step 1.
+
+=== Step 3: Create the Data Source
+
+[source,bash]
+----
+oc apply \
+  -n "$NS" \
+  -f - <<'EOF'
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: thanos-querier
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  valuesFrom:
+  - targetPath: secureJsonData.httpHeaderValue1
+    valueFrom:
+      secretKeyRef:
+        name: grafana-thanos-token
+        key: token
+  - targetPath: jsonData.customQueryParameters
+    valueFrom:
+      secretKeyRef:
+        name: grafana-thanos-token
+        key: namespace
+  datasource:
+    name: thanos-querier
+    uid: thanos-querier
+    type: prometheus
+    access: proxy
+    url: https://thanos-querier.openshift-monitoring.svc.cluster.local:9092
+    isDefault: true
+    jsonData:
+      httpMethod: GET
+      customQueryParameters: namespace=${namespace}
+      httpHeaderName1: Authorization
+      tlsSkipVerify: true
+      timeInterval: 30s
+    secureJsonData:
+      httpHeaderValue1: Bearer ${token}
+EOF
+----
+
+=== Step 4: Test the Data Source
+
+In Grafana, navigate to *Connections* -> *Data sources* and open `thanos-querier`. Check that the HTTP method is `GET` and that the custom query parameters show `namespace=` followed by your project name, then click *Save & test* (or *Test*). Grafana reports that it successfully queried the Prometheus API.
+
+Then open *Explore*, select the `thanos-querier` data source, and run:
+
+[source,promql]
+----
+sum by (pod) (container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+})
+----
+
+The result contains only the pods of your project, although the query has no `namespace` matcher.
+
+=== Step 5: See Why GET Matters (Optional)
+
+Change the HTTP method of the data source to `POST`. A merge patch changes only the fields it contains and keeps the other settings of `jsonData`:
+
+[source,bash]
+----
+oc patch grafanadatasource thanos-querier \
+  -n "$NS" \
+  --type=merge \
+  -p '{"spec":{"datasource":{"jsonData":{"httpMethod":"POST"}}}}'
+----
+
+After the operator has updated the data source, run the query in *Explore* again. It fails with an authorization error (`403 Forbidden`), because the tenancy port checks a `POST` request against the `create` verb, which the `view` role does not grant. Change the method back to `GET` before you continue:
+
+[source,bash]
+----
+oc patch grafanadatasource thanos-querier \
+  -n "$NS" \
+  --type=merge \
+  -p '{"spec":{"datasource":{"jsonData":{"httpMethod":"GET"}}}}'
+----
+
+== Exercise 3: Create a Dashboard
+
+Practice defining a dashboard as a Kubernetes resource.
+
+=== Step 1: Create the Dashboard
+
+[source,bash]
+----
+oc apply \
+  -n "$NS" \
+  -f - <<'EOF'
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: prometheus-example-app
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  datasources:
+  - inputName: DS_PROMETHEUS
+    datasourceName: thanos-querier
+  json: |
+    {
+      "title": "Prometheus Example App",
+      "uid": "prometheus-example-app",
+      "schemaVersion": 39,
+      "time": {"from": "now-1h", "to": "now"},
+      "refresh": "30s",
+      "panels": [
+        {
+          "id": 1,
+          "type": "timeseries",
+          "title": "Request rate by status code",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+              "expr": "sum by (code) (rate(http_requests_total{job=\"prometheus-example-app\"}[5m]))",
+              "legendFormat": "{{code}}"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "type": "timeseries",
+          "title": "Error ratio (5xx)",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0}, "overrides": []},
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+              "expr": "namespace_job:http_requests_errors:ratio_rate5m{job=\"prometheus-example-app\"}",
+              "legendFormat": "{{job}}"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "type": "timeseries",
+          "title": "Memory working set by pod",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+              "expr": "sum by (pod) (container_memory_working_set_bytes{container!=\"\", container!=\"POD\"})",
+              "legendFormat": "{{pod}}"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "type": "timeseries",
+          "title": "CPU usage by pod (cores)",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+              "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{container!=\"\", container!=\"POD\"}[5m]))",
+              "legendFormat": "{{pod}}"
+            }
+          ]
+        }
+      ]
+    }
+EOF
+----
+
+=== Step 2: Open the Dashboard
+
+In Grafana, navigate to *Dashboards* and open *Prometheus Example App*. If the request rate and error ratio panels show no data, start the traffic loops from the Module 5 exercises again.
+
+=== Step 3: Add a Panel
+
+Add a fifth panel that shows the number of firing alerts of your project. Edit the `GrafanaDashboard` resource with:
+
+[source,bash]
+----
+oc edit grafanadashboard prometheus-example-app -n "$NS"
+----
+
+Add this object to the `panels` array (add a comma after the previous panel):
+
+[source,json]
+----
+{
+  "id": 5,
+  "type": "stat",
+  "title": "Firing alerts",
+  "gridPos": {"h": 4, "w": 6, "x": 0, "y": 16},
+  "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+  "targets": [
+    {
+      "refId": "A",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "expr": "count(ALERTS{alertstate=\"firing\"}) or vector(0)"
+    }
+  ]
+}
+----
+
+The query is:
+
+[source,promql]
+----
+count(ALERTS{alertstate="firing"}) or vector(0)
+----
+
+`count()` of an empty result is empty, not 0, so `or vector(0)` returns 0 when no alert is firing. After the operator has synchronized the resource, reload the dashboard in Grafana and check the new panel. Generate errors as in Module 5, Exercise 3, and watch the value change when `ExampleAppHighErrorRate` fires.
+
+=== Step 4: Try a Change in the Grafana UI
+
+In Grafana, change the title of a panel and save the dashboard. Then wait for the operator's next synchronization (up to 10 minutes, its default `resyncPeriod`), or change the `GrafanaDashboard` resource, and reload the dashboard. Which title does the panel have now, and why?
+
+== Exercise 4: Clean Up
+
+When you have finished the workshop, delete the resources you created in Modules 5 and 6:
+
+[source,bash]
+----
+oc delete grafanadashboard prometheus-example-app -n "$NS"
+oc delete grafanadatasource thanos-querier -n "$NS"
+oc delete grafana grafana -n "$NS"
+oc delete secret grafana-thanos-token -n "$NS"
+oc delete rolebinding grafana-thanos-view -n "$NS"
+oc delete serviceaccount grafana-thanos -n "$NS"
+oc delete prometheusrule prometheus-example-app -n "$NS"
+oc delete servicemonitor prometheus-example-app -n "$NS"
+oc delete route,service,deployment prometheus-example-app -n "$NS"
+oc delete pod api-client -n "$NS"
+----
+
+Deleting the secret also revokes the token of the Grafana service account.
+
+== Verification
+
+After completing these exercises, verify your understanding:
+
+* Can you explain why Grafana needs the `namespace` parameter, a bearer token and `GET` requests to query the Thanos Querier tenancy port?
+* Can you create a Grafana instance, a data source and a dashboard as Kubernetes resources?
+* Can you add a panel with a PromQL query to a dashboard?
+* Can you explain what happens to changes made in the Grafana UI to a dashboard that the operator manages?
+
+If you can answer yes to all these questions, you have successfully completed the Prometheus Query Workshop! You are now equipped to write effective PromQL queries, alert on them and visualize them for your applications on OpenShift.

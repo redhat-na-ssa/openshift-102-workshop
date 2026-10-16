@@ -1,0 +1,351 @@
+= Setup Requirements
+
+This page is for the instructor or cluster administrator who prepares the lab. It lists everything the exercises rely on, derived from the commands and manifests in the modules. It has two audiences: the administrator preparing the cluster (cluster, operators, accounts and roles, image access), and each attendee preparing a workstation (CLI tools). The <<_verification_checklist,Verification Checklist>> at the end lets both confirm the environment is ready before the workshop starts.
+
+Only Module 2 (Exercises) and Module 3 (Exercises) have hands-on steps. Module 1 and Module 4 are reading content; their commands are examples, and the Module 4 commands (`oc debug node/...`, `oc get kubeletconfig`, mirror sets, Image Puller) need cluster administrator privileges, as does reading the scheduler logs in the Module 2 (content) troubleshooting example.
+
+== Cluster
+
+* **OpenShift version**: OpenShift 4.16 or later (Kubernetes 1.29 or later). The content was last tested on OpenShift 4.22.16.
+* **Nodes**: at least two schedulable worker nodes; three is better. The content was tested on a two-node cluster.
+** Module 2, Exercise 2 (taints): the instructor taints one node. While it is tainted, every attendee's new pods must fit on the remaining nodes.
+** Module 2, Exercises 3 and 4 (pod anti-affinity, topology spread): with one node, all replicas land on it and there is nothing to observe. The Module 2 text describes a three-node 2-2-2 spread.
+** Module 3, Exercise 3 (Descheduler): the descheduler needs at least two ready nodes. On a single-node cluster it skips every cycle and evicts nothing.
+** Single-node OpenShift is therefore not suitable. A compact three-node cluster with schedulable control-plane nodes also works. On clusters with tainted control-plane nodes, Exercise 4 uses `nodeTaintsPolicy: Honor` so that those nodes do not count in the spread.
+* **CPU architecture**: x86_64 (`amd64`) worker nodes, and at least one with AVX. Module 2, Exercise 1 requires `kubernetes.io/arch=amd64`, and Exercise 5 requires `feature.node.kubernetes.io/cpu-cpuid.AVX=true`; on other nodes those pods stay `Pending`.
+* **Capacity**: the exercises' resource requests peak at about 0.75 vCPU and 0.9 GiB of memory per attendee (Module 2, Exercise 6), plus up to ten small NGINX pods without requests (Module 2, Exercise 4). Size worker nodes for that times the number of attendees, on top of the platform's own usage.
+* **Pod slots**: each attendee runs up to about 11 pods at once (Module 2, Exercise 4 scales to 10 replicas). Every node has a pod limit (`maxPods`, 250 by default), and the operators below add about 10 pods of their own. Check the free slots before the workshop: allow about 11 per attendee plus 10 for the operators. A node that runs out of pod slots leaves new pods `Pending`, including platform pods.
++
+[source,bash]
+----
+oc get nodes \
+  -o custom-columns=NODE:.metadata.name,MAXPODS:.status.allocatable.pods
+----
++
+[source,bash]
+----
+oc get pods -A \
+  --field-selector=status.phase=Running \
+  -o custom-columns=NODE:.spec.nodeName \
+  --no-headers | sort | uniq -c
+----
+* **Metrics API** (`metrics.k8s.io`): `oc adm top nodes` (Module 2, Exercise 6) and the CPU-based Horizontal Pod Autoscaler (Module 3, Exercise 1) read resource metrics. OpenShift's built-in platform monitoring provides this API; do not disable it. User workload monitoring is not needed: no exercise uses custom or external metrics.
+* **No restrictive quotas**: do not put a `ResourceQuota` or a `LimitRange` with maximums on attendee projects. Module 2, Exercise 6, Step 4 creates a pod that requests 1000 CPUs and 1000Gi and expects it to stay `Pending`; a quota or limit range rejects it at creation instead.
+
+== Operators and Cluster Components
+
+[cols="2,3,2,4,2",options="header"]
+|===
+|Component |Install source |Namespace |Configuration needed |Used by
+
+|Kube Descheduler Operator
+|OperatorHub, Red Hat catalog (`redhat-operators`), package `cluster-kube-descheduler-operator`, channel `stable`
+|`openshift-kube-descheduler-operator`
+|Create a `KubeDescheduler` named `cluster` (see below). Required before applying `workshops/deploy-workshop/provisioning/attendee-rbac.yaml`, which binds a role in this namespace.
+|Module 3, Exercise 3 (required)
+
+|Vertical Pod Autoscaler Operator
+|OperatorHub, Red Hat catalog (`redhat-operators`), package `vertical-pod-autoscaler`, channel `stable`
+|`openshift-vertical-pod-autoscaler`
+|None beyond the install; the operator runs the recommender, updater and admission controller. The install also adds VPA permissions to the default project `admin` and `edit` roles (cluster role `verticalpodautoscalers.autoscaling.k8s.io-v1-edit`, aggregated to `edit`), so attendees create and delete their own VPAs.
+|Module 3, Exercise 2 (required)
+
+|Node Feature Discovery Operator
+|OperatorHub, Red Hat catalog (`redhat-operators`), package `nfd`, channel `stable`
+|`openshift-nfd`
+|Create a `NodeFeatureDiscovery` instance (the OperatorHub defaults are fine) so that nodes get `feature.node.kubernetes.io/...` labels.
+|Module 2, Exercise 5 (required)
+
+|Metrics API (platform monitoring)
+|Built in
+|`openshift-monitoring`
+|None; must stay enabled.
+|Module 2, Exercise 6; Module 3, Exercise 1
+
+|Secondary Scheduler Operator
+|OperatorHub, Red Hat catalog (`redhat-operators`), package `openshift-secondary-scheduler-operator`, channel `stable`
+|`openshift-secondary-scheduler-operator`
+|Optional. Module 2, Exercise 7 works without it: the pod that names `my-custom-scheduler` stays `Pending`, which is the expected result. To also show a pod being scheduled by it, create a `SecondaryScheduler` whose scheduler configuration (Module 1) uses `schedulerName: my-custom-scheduler`; it needs a scheduler image in `spec.schedulerImage`.
+|Module 1 (reading); Module 2, Exercise 7 Step 1 (instructor demo)
+
+|Kubernetes Image Puller Operator
+|OperatorHub, community catalog (`community-operators`), package `kubernetes-imagepuller-operator`
+|`openshift-image-puller` in the Module 4 examples
+|Optional; no attendee step uses it. Install only to demonstrate the Module 4 `KubernetesImagePuller` example.
+|Module 4 (reading, instructor demo)
+|===
+
+=== Installing the operators
+
+Each of the three required operators installs into its own namespace with an `OperatorGroup` that targets only that namespace (`OwnNamespace` install mode). Install them from OperatorHub in the web console, or from the CLI by creating the namespace, operator group and subscription for each one:
+
+[source,bash]
+----
+for op in \
+  openshift-kube-descheduler-operator:cluster-kube-descheduler-operator \
+  openshift-vertical-pod-autoscaler:vertical-pod-autoscaler \
+  openshift-nfd:nfd
+do
+  ns=${op%%:*}
+  pkg=${op##*:}
+  cat <<EOF | oc apply -f -
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: ${ns}
+  namespace: ${ns}
+spec:
+  targetNamespaces:
+  - ${ns}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: ${pkg}
+  namespace: ${ns}
+spec:
+  channel: stable
+  name: ${pkg}
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+EOF
+done
+----
+
+Wait until each operator's CSV shows `Succeeded` (see the <<_verification_checklist,Verification Checklist>>), then create the `NodeFeatureDiscovery` instance and the `KubeDescheduler` below.
+
+To create the `NodeFeatureDiscovery` instance from the CLI, apply the default example that the NFD operator ships in its CSV (the same one OperatorHub shows):
+
+[source,bash]
+----
+oc get csv \
+  -n openshift-nfd \
+  -o json |
+  jq '.items[]
+        | select(.metadata.name | startswith("nfd"))
+        | .metadata.annotations["alm-examples"]
+        | fromjson
+        | .[]
+        | select(.kind == "NodeFeatureDiscovery")' |
+  oc apply \
+    -n openshift-nfd \
+    -f -
+----
+
+The nodes get their `feature.node.kubernetes.io/...` labels within about two minutes.
+
+=== Descheduler configuration
+
+The Module 3 exercise reads `kubedescheduler/cluster` in `openshift-kube-descheduler-operator` (profiles, `deschedulingIntervalSeconds`, `mode`, `evictionLimits`), so the object must exist. The Step 7 example of that exercise is a working starting point (without its `do-not-deploy` annotation, which only marks the example):
+
+[source,bash]
+----
+cat <<'EOF' | oc apply -f -
+apiVersion: operator.openshift.io/v1
+kind: KubeDescheduler
+metadata:
+  name: cluster
+  namespace: openshift-kube-descheduler-operator
+spec:
+  managementState: Managed
+  deschedulingIntervalSeconds: 3600
+  profiles:
+  - AffinityAndTaints
+  - TopologyAndDuplicates
+  mode: Automatic
+  evictionLimits:
+    total: 10
+    node: 5
+EOF
+----
+
+Use `mode: Automatic` if attendees should see eviction events in Module 3, Exercise 3, Step 6; with `Predictive` the descheduler only logs what it would evict. In `Automatic` mode with `AffinityAndTaints`, a descheduling cycle that runs while a node carries the Module 2 taint evicts attendee pods that do not tolerate it; keep the interval long, or taint and untaint promptly.
+
+== Attendee Accounts, Projects and Roles
+
+=== Accounts and projects
+
+Each attendee needs an OpenShift user and one project of their own. The exercises run every command in the current project (no `-n` flags except for the read-only Descheduler steps), so the project name does not matter. Either let attendees create their own project (the default self-provisioner role allows it):
+
+[source,bash]
+----
+oc new-project <name>
+----
+
+Or create the projects in advance:
+
+[source,bash]
+----
+oc adm new-project <user>-deploy --admin=<user>
+----
+
+When the instructor creates the project, attendees must select it after logging in; otherwise `oc` stays in no project (or `default`), and the checks below fail with `no` and `Forbidden` answers that look like missing permissions:
+
+[source,bash]
+----
+oc project <user>-deploy
+----
+
+The default project `admin` role (or `edit`) covers everything attendees do in their project: creating pods, deployments, HPAs and VPAs, `oc exec` into pods, `oc scale`, `oc edit` and reading events.
+
+=== Cluster-wide read access
+
+Several steps read cluster-scoped objects (`oc get nodes`, `oc describe node`, `oc adm top nodes`, `oc get priorityclasses`) and the Descheduler Operator's namespace, which a project user is `Forbidden` from seeing. The manifest `workshops/deploy-workshop/provisioning/attendee-rbac.yaml` grants read-only access to just those objects:
+
+. Install the Kube Descheduler Operator first (the manifest's `RoleBinding` lives in its namespace).
+. Apply the manifest from the workshop source repository:
++
+[source,bash]
+----
+oc apply \
+  --filename workshops/deploy-workshop/provisioning/attendee-rbac.yaml
+----
++
+It creates two read-only cluster roles and binds them to the `workshop-attendees` group: `workshop-attendee-node-reader` (nodes, node metrics, priority classes and pods, cluster-wide) and `workshop-attendee-descheduler-reader` (the `KubeDescheduler` resource, deployments, pods, events and pod logs in `openshift-kube-descheduler-operator` only).
+. Add every attendee to the group:
++
+[source,bash]
+----
+oc adm groups new workshop-attendees <user1> <user2>
+# or, if the group already exists
+oc adm groups add-users workshop-attendees <user3>
+----
++
+To bind the roles to individual users instead of the group:
++
+[source,bash]
+----
+oc adm policy add-cluster-role-to-user \
+  workshop-attendee-node-reader <user>
+
+oc adm policy add-role-to-user \
+  workshop-attendee-descheduler-reader <user> \
+  -n openshift-kube-descheduler-operator
+----
+
+The roles grant no write access. Reading pods in every namespace lets `oc describe node` show its `Allocated resources` section, but also shows attendees other projects' pod specs, so use these roles on lab clusters only.
+
+=== Instructor-only steps
+
+These steps need cluster administrator privileges and stay with the instructor; the exercises mark them:
+
+* Module 2, Exercise 2: adding and removing the `special-workload=true:NoSchedule` taint on a node.
+* Module 2, Exercise 7, Step 1: reading the config maps in the `openshift-kube-scheduler` and `openshift-secondary-scheduler-operator` namespaces (the attendee role already lets attendees list the pods there).
+* Module 3, Exercise 3: creating or changing the `KubeDescheduler`.
+* Module 4: `oc debug node/...`, `oc get kubeletconfig`, mirror sets and Image Puller resources.
+
+== Attendee Workstation
+
+[cols="1,2,3",options="header"]
+|===
+|Tool |Version |Where it is used
+
+|`oc`
+|Matching the cluster's minor version (tested with OpenShift 4.22.16)
+|Every exercise. `oc adm top`, `oc image info` and `oc debug` are subcommands of `oc`.
+
+|`jq`
+|Any 1.6 or later (no specific minimum tested)
+|Module 3, Exercise 3, Step 2 (pipes `-o jsonpath='{.spec}'` output to `jq .`); the NFD label example in Module 2 (content). Optional: the same data is visible with `-o yaml`.
+
+|A POSIX shell with job control, plus `awk`, `sort`, `uniq`, `grep`
+|Any (bash tested)
+|Module 2, Exercise 4 counts pods per node with `sort \| uniq -c`. Module 3, Exercise 1 runs `oc exec ... &` and stops it with `kill %1`.
+|===
+
+Attendees need two terminals for Module 3, Exercise 1 (one generates load while the other watches the HPA). A web terminal or tools pod works if it provides the tools above; when this workshop is built inside the OpenShift 102 Showroom, its shared CLI tools page describes that container. No local container engine (`podman`, `docker`) is needed: the Module 4 `Dockerfile` is an example to read, not to build.
+
+== Network and Image Access
+
+Container images the exercises pull (all attendee steps):
+
+[cols="2,3",options="header"]
+|===
+|Image |Used by
+
+|`quay.io/nginx/nginx-unprivileged:latest`
+|Module 2, Exercises 1-7; Module 3, Exercises 1-3
+
+|`quay.io/sclorg/redis-7-c9s:latest`
+|Module 2, Exercise 3 (cache pod)
+|===
+
+Both images come from Quay.io, run as a non-root arbitrary UID under the default `restricted-v2` security context constraint, and avoid Docker Hub pull rate limits. Images named in the reading content (`myapp:latest`, `critical-app:latest`, `nvidia/cuda:latest`, `registry.k8s.io/pause:3.1`, `alpine:latest`, `registry.example.com/...`) are illustrations; no exercise pulls them.
+
+No exercise fetches external URLs; the links in the content are documentation for reading.
+
+For disconnected or restricted-egress clusters:
+
+* Mirror the two Quay.io images above, and add an `ImageTagMirrorSet` for `quay.io/nginx` and `quay.io/sclorg`, since the exercises pull by tag.
+* Mirror the operator catalogs and bundles for the Kube Descheduler, Vertical Pod Autoscaler and Node Feature Discovery operators (and the Secondary Scheduler and Image Puller operators if you demonstrate them), including the operand images they deploy, such as the NFD worker image and the secondary scheduler image.
+* Attendee workstations need to reach only the cluster API (and the console, if they use a web terminal).
+
+== Verification Checklist
+
+Run as a cluster administrator:
+
+[source,bash]
+----
+# At least two Ready worker nodes, amd64
+oc get nodes -L kubernetes.io/arch
+
+# At least one node labelled by NFD with AVX (Module 2, Exercise 5)
+oc get nodes -l feature.node.kubernetes.io/cpu-cpuid.AVX=true
+
+# Operators installed: each CSV shows PHASE Succeeded
+# (grep hides the copied CSVs of operators installed
+# for all namespaces)
+oc get csv -n openshift-kube-descheduler-operator |
+  grep -i descheduler
+
+oc get csv -n openshift-vertical-pod-autoscaler | grep -i vertical
+oc get csv -n openshift-nfd | grep -i nfd
+
+# Descheduler configured (Module 3, Exercise 3)
+oc get kubedescheduler cluster \
+  -n openshift-kube-descheduler-operator \
+  -o jsonpath='{.spec.mode} {.spec.profiles}{"\n"}'
+
+# Metrics API answers with CPU and memory per node
+oc adm top nodes
+
+# Attendee RBAC and group in place
+oc get clusterrole \
+  workshop-attendee-node-reader \
+  workshop-attendee-descheduler-reader
+
+oc get group workshop-attendees
+----
+
+Run as an attendee (or as an administrator with `--as=<user>` added to each `oc auth can-i`); every `oc auth can-i` should answer `yes`:
+
+[source,bash]
+----
+oc whoami
+oc project <user>-deploy
+
+oc auth can-i list nodes
+oc auth can-i list nodes.metrics.k8s.io
+oc auth can-i list priorityclasses
+oc auth can-i get kubedeschedulers \
+  -n openshift-kube-descheduler-operator
+
+oc auth can-i create pods --subresource=exec
+oc auth can-i create horizontalpodautoscalers.autoscaling
+oc auth can-i create verticalpodautoscalers.autoscaling.k8s.io
+
+# Both exercise images pull and start (STATUS Running), then clean up
+oc run smoke-nginx --image=quay.io/nginx/nginx-unprivileged:latest
+oc run smoke-redis --image=quay.io/sclorg/redis-7-c9s:latest
+oc get pods smoke-nginx smoke-redis
+oc delete pod smoke-nginx smoke-redis
+
+# Workstation tools
+oc version --client
+jq --version
+----

@@ -1,0 +1,159 @@
+= Storage and Distribution of Charts
+:hardbreaks-option:
+
+Once you have created and tested your Helm charts, you need to store and distribute them so they can be used across your organization or shared with others.
+Helm supports two primary methods for storing and distributing charts: traditional chart repositories and OCI (Open Container Initiative) registries.
+
+== Chart Repositories
+
+Traditional Helm chart repositories are HTTP servers that host chart packages and an `index.yaml` file containing metadata about available charts.
+Repositories provide a centralized location for storing and discovering charts.
+
+=== Repository Structure
+
+A chart repository typically contains:
+
+* Chart package files (`.tgz` files)
+* An `index.yaml` file that lists all charts, their versions, and metadata
+* Optional chart documentation and README files
+
+=== Working with Repositories
+
+You can add repositories, search for charts, and install from repositories using standard Helm commands.
+Repositories are well-suited for organizations that want to maintain their own chart hosting infrastructure.
+
+== OCI Registries
+
+Helm 3.8+ supports storing charts as OCI artifacts in container registries.
+This allows you to use the same registries you use for container images to store Helm charts, simplifying your infrastructure.
+
+=== OCI Artifacts
+
+When you push a chart to an OCI registry, Helm packages it as an OCI artifact.
+OCI registries provide:
+
+* Authentication and authorization using existing registry credentials
+* Versioning and tagging similar to container images
+* Integration with existing container registry infrastructure
+* Support for both public and private registries
+
+=== Advantages of OCI Registries
+
+Using OCI registries for Helm charts offers several advantages:
+
+* **Unified Infrastructure**: Use the same registry for both container images and Helm charts
+* **Simplified Authentication**: Leverage existing registry authentication mechanisms
+* **Better Integration**: Works seamlessly with GitOps tools and CI/CD pipelines
+* **Modern Standard**: OCI is the modern standard for artifact distribution
+
+== Packaging Charts
+
+Before distributing a chart, you package it into a compressed archive:
+
+[source,bash]
+----
+helm package ./my-chart
+----
+
+This creates a `.tgz` file containing all chart files.
+The package can then be uploaded to a repository or pushed to an OCI registry.
+
+== Signing and Verifying Charts
+
+Chart signing provides cryptographic verification that a chart package has not been tampered with and comes from a trusted source.
+This is essential for maintaining security and integrity in your chart distribution pipeline.
+
+=== Why Sign Charts?
+
+Signing charts ensures:
+
+* **Integrity**: Verifies that the chart has not been modified since it was signed
+* **Authenticity**: Confirms that the chart comes from a trusted publisher
+* **Non-repudiation**: Provides proof of who created and signed the chart
+* **Security**: Protects against supply chain attacks and unauthorized modifications
+
+=== Signing a Chart
+
+To sign a chart, you need a PGP key pair.
+Helm reads keys from keyring files in the legacy format, which GnuPG 2.1 and later no longer create (they keep keys in `pubring.kbx`), so export your secret key to a keyring file first.
+Then package and sign the chart:
+
+[source,bash]
+----
+gpg --export-secret-keys <key-name> > secring.gpg
+helm package --sign \
+  --key <key-name> \
+  --keyring secring.gpg \
+  ./my-chart
+----
+
+If your key is protected by a passphrase, Helm prompts for it, and the prompt fails with `inappropriate ioctl for device` when there is no terminal (for example in a script or CI job).
+In that case, put the passphrase in a file and pass it with `--passphrase-file`:
+
+[source,bash]
+----
+helm package --sign \
+  --key <key-name> \
+  --keyring secring.gpg \
+  --passphrase-file passphrase.txt \
+  ./my-chart
+----
+
+This creates a `.tgz.prov` (provenance) file containing the signature and metadata about the chart.
+
+=== Verifying a Signed Chart
+
+Before installing a chart, verify its signature to ensure it has not been tampered with.
+Export the signer's public key to a keyring file and pass it to `helm verify`:
+
+[source,bash]
+----
+gpg --export <key-name> > pubring.gpg
+helm verify --keyring pubring.gpg my-chart-0.1.0.tgz
+----
+
+This command checks that:
+
+* The signature file exists
+* The signature is valid
+* The chart matches the signed version
+* The signing key is in the keyring you passed
+
+`helm verify` only reports the result.
+To make Helm refuse to install a chart that fails verification, add `--verify` to the install, for example:
+
+[source,bash]
+----
+helm install signed-release ./my-chart-0.1.0.tgz \
+  --verify \
+  --keyring pubring.gpg
+----
+
+This protects you from potentially compromised packages.
+
+=== Key Management
+
+For production use, establish a key management strategy:
+
+* Store private keys securely (key vaults, hardware security modules)
+* Distribute public keys to chart consumers
+* Rotate keys periodically
+* Maintain a keyring of trusted public keys
+
+Chart signing is a critical security practice, especially when distributing charts outside your organization or when charts are used in production environments.
+
+== Distribution Methods
+
+Choose your distribution method based on your organization's needs:
+
+* **Chart Repositories**: Best for organizations that want dedicated chart hosting with full control over the repository structure and metadata.
+
+* **OCI Registries**: Best for organizations already using container registries and wanting to consolidate artifact storage, or for teams adopting modern cloud-native practices.
+
+Both methods are valid and supported by Helm.
+The choice depends on your infrastructure, security requirements, and organizational preferences.
+
+== Next Steps
+
+The exercises will guide you through packaging charts, pushing them to OCI registries, and working with both distribution methods.
+You will gain hands-on experience with the commands and workflows needed to distribute your charts effectively.

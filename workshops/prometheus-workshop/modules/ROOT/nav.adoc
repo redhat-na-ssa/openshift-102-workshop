@@ -1,0 +1,22 @@
+* xref:index.adoc[Introduction]
+* xref:setup-requirements.adoc[Setup Requirements]
+ifdef::openshift-102-showroom[]
+* xref:master@openshift-102:ROOT:cli-tools.adoc[Shared CLI tools]
+endif::[]
+* Module 1: Prometheus Query Language Fundamentals
+  ** xref:module-01-content.adoc[Content]
+* Module 2: Selectors and Filtering
+  ** xref:module-02-content.adoc[Content]
+  ** xref:module-02-exercises.adoc[Exercises]
+* Module 3: Aggregation Functions
+  ** xref:module-03-content.adoc[Content]
+  ** xref:module-03-exercises.adoc[Exercises]
+* Module 4: Advanced Query Patterns
+  ** xref:module-04-content.adoc[Content]
+  ** xref:module-04-exercises.adoc[Exercises]
+* Module 5: Alerting Rules
+  ** xref:module-05-content.adoc[Content]
+  ** xref:module-05-exercises.adoc[Exercises]
+* Module 6: Grafana Dashboards
+  ** xref:module-06-content.adoc[Content]
+  ** xref:module-06-exercises.adoc[Exercises]

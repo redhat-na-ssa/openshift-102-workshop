@@ -1,0 +1,621 @@
+= Exercises
+:hardbreaks-option:
+
+== Exercise 1: Horizontal Pod Autoscaler
+
+In this exercise, you will create and configure a Horizontal Pod Autoscaler (HPA) to automatically scale a deployment based on CPU utilization.
+
+=== Step 1: Create a Deployment
+
+First, create a deployment that will be scaled by the HPA:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deployment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+      - name: web
+        image: quay.io/nginx/nginx-unprivileged:latest
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+----
+
+Apply the deployment:
+
+[source,bash]
+----
+oc apply -f web-deployment.yaml
+oc get deployment web-deployment
+----
+
+=== Step 2: Create an HPA
+
+Create a Horizontal Pod Autoscaler that scales the deployment based on CPU utilization:
+
+[source,yaml]
+----
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web-deployment
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+----
+
+Apply the HPA:
+
+[source,bash]
+----
+oc apply -f web-hpa.yaml
+oc get hpa web-hpa
+----
+
+=== Step 3: Monitor HPA Status
+
+Monitor the HPA to see its current status and scaling decisions:
+
+[source,bash]
+----
+# View HPA status
+oc get hpa web-hpa
+
+# Get detailed HPA information
+oc describe hpa web-hpa
+----
+
+Watch the HPA and the deployment replicas, one at a time (press Ctrl+C to stop each watch):
+
+[source,bash]
+----
+oc get hpa web-hpa -w
+----
+
+[source,bash]
+----
+oc get deployment web-deployment -w
+----
+
+Observe the current replica count and target metrics.
+
+=== Step 4: Generate Load
+
+Generate CPU load on the pods to trigger scaling. In a separate terminal, run:
+
+[source,bash]
+----
+# Get a pod name
+POD_NAME=$(oc get pods \
+  -l app=web \
+  -o jsonpath='{.items[0].metadata.name}')
+
+# Generate CPU load (this will run in the background)
+oc exec $POD_NAME -- \
+  sh -c "while true; do dd if=/dev/zero of=/dev/null; done" &
+----
+
+Monitor the HPA and deployment to observe scaling behavior:
+
+[source,bash]
+----
+# Watch HPA scaling
+oc get hpa web-hpa -w
+
+# Check deployment replica count
+oc get deployment web-deployment
+----
+
+=== Step 5: Observe Scaling Behavior
+
+After a few minutes, observe how the HPA responds:
+
+[source,bash]
+----
+# View HPA events
+oc describe hpa web-hpa
+
+# Check current replica count
+oc get pods -l app=web
+
+# View HPA metrics
+oc get hpa web-hpa -o yaml
+----
+
+Note how the replica count changes based on CPU utilization.
+
+=== Step 6: Stop Load and Observe Scale-Down
+
+Stop the load generation and observe the scale-down behavior. In the terminal where you started the load, run:
+
+[source,bash]
+----
+# Stop the local oc exec job;
+# the loop keeps running inside the container
+kill %1
+
+# Delete the loaded pod; the Deployment replaces it with an idle pod
+oc delete pod $POD_NAME
+----
+
+Monitor the scale-down, one watch at a time (press Ctrl+C to stop each watch):
+
+[source,bash]
+----
+oc get hpa web-hpa -w
+----
+
+[source,bash]
+----
+oc get deployment web-deployment -w
+----
+
+Observe the stabilization window and scale-down policies in action.
+
+=== Step 7: Clean Up
+
+Remove the test resources:
+
+[source,bash]
+----
+oc delete hpa web-hpa
+oc delete deployment web-deployment
+----
+
+== Exercise 2: Vertical Pod Autoscaler
+
+In this exercise, you will create and configure a Vertical Pod Autoscaler (VPA) to automatically adjust CPU and memory requests and limits for containers based on historical usage.
+
+=== Step 1: Create a Deployment
+
+Create a deployment that will be managed by the VPA:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vpa-deployment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vpa-app
+  template:
+    metadata:
+      labels:
+        app: vpa-app
+    spec:
+      containers:
+      - name: app
+        image: quay.io/nginx/nginx-unprivileged:latest
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+----
+
+Apply the deployment:
+
+[source,bash]
+----
+oc apply -f vpa-deployment.yaml
+oc get deployment vpa-deployment
+oc get pods -l app=vpa-app
+----
+
+=== Step 2: Create a VPA in Recommendation Mode
+
+Create a VPA in "Off" mode to view recommendations without automatic updates:
+
+[source,yaml]
+----
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: vpa-recommender
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vpa-deployment
+  updatePolicy:
+    updateMode: "Off"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: app
+      minAllowed:
+        cpu: 50m
+        memory: 64Mi
+      maxAllowed:
+        cpu: 2
+        memory: 4Gi
+      controlledResources: ["cpu", "memory"]
+----
+
+Save it as `vpa-recommender.yaml` and apply it:
+
+[source,bash]
+----
+oc apply -f vpa-recommender.yaml
+----
+
+[source,bash]
+----
+oc get vpa vpa-recommender
+----
+
+NOTE: Installing the Vertical Pod Autoscaler Operator adds VPA permissions to the default project `admin` and `edit` roles, so you can create and delete VPAs in your own project.
+
+=== Step 3: View VPA Recommendations
+
+After the VPA has collected some usage data, view its recommendations:
+
+[source,bash]
+----
+# View VPA status
+oc get vpa vpa-recommender -o yaml
+
+# Get detailed VPA information
+oc describe vpa vpa-recommender
+----
+
+The VPA will show recommendations including:
+
+* **Target**: Recommended values for optimal performance
+* **Lower Bound**: Minimum values to maintain performance
+* **Upper Bound**: Maximum recommended values
+
+=== Step 4: Generate Load and Monitor
+
+Generate some load on the pods to provide usage data for VPA analysis:
+
+[source,bash]
+----
+# Get a pod name
+POD_NAME=$(oc get pods \
+  -l app=vpa-app \
+  -o jsonpath='{.items[0].metadata.name}')
+
+# Generate CPU load for two minutes
+oc exec $POD_NAME -- timeout 120 sh -c 'while true; do :; done'
+----
+
+Wait a few minutes, then check the VPA recommendations again:
+
+[source,bash]
+----
+oc describe vpa vpa-recommender
+----
+
+Observe how the recommendations may change based on actual usage patterns.
+
+=== Step 5: Create VPA in Initial Mode
+
+Create a new VPA in "Initial" mode that sets resource requests only when pods are first created:
+
+[source,yaml]
+----
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: vpa-initial
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vpa-deployment
+  updatePolicy:
+    updateMode: "Initial"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: app
+      minAllowed:
+        cpu: 50m
+        memory: 64Mi
+      maxAllowed:
+        cpu: 2
+        memory: 4Gi
+      controlledResources: ["cpu", "memory"]
+----
+
+Save it as `vpa-initial.yaml`.
+Delete the previous VPA so that only one VPA targets the deployment, then apply the new one:
+
+[source,bash]
+----
+oc delete vpa vpa-recommender
+----
+
+[source,bash]
+----
+oc apply -f vpa-initial.yaml
+----
+
+A new VPA has no recommendation yet, and pods created before it has one keep their original requests. Wait until the VPA reports a recommendation (this usually takes one to two minutes):
+
+[source,bash]
+----
+oc wait vpa/vpa-initial \
+  --for=condition=RecommendationProvided \
+  --timeout=5m
+----
+
+Initial mode only acts when pods are created, so delete and recreate the deployment to see it in action:
+
+[source,bash]
+----
+oc delete deployment vpa-deployment
+----
+
+[source,bash]
+----
+oc apply -f vpa-deployment.yaml
+----
+
+Check the new pods to see if VPA has set resource requests:
+
+[source,bash]
+----
+oc get pods \
+  -l app=vpa-app \
+  -o yaml |
+  grep -A 10 resources
+
+oc describe pod -l app=vpa-app
+----
+
+=== Step 6: Compare Resource Settings
+
+Compare the original resource settings with VPA recommendations:
+
+[source,bash]
+----
+# View VPA recommendations
+oc get vpa vpa-initial -o yaml | grep -A 20 recommendation
+
+# View actual pod resource settings
+oc get pod \
+  -l app=vpa-app \
+  -o jsonpath='{.items[0].spec.containers[0].resources}'
+----
+
+=== Step 7: Clean Up
+
+Remove the test resources:
+
+[source,bash]
+----
+oc delete vpa vpa-initial
+----
+
+[source,bash]
+----
+oc delete deployment vpa-deployment
+----
+
+== Exercise 3: Descheduler Operator
+
+In this exercise, you will examine the Descheduler Operator configuration and understand how descheduling profiles work. Note that creating or modifying the Descheduler requires administrator privileges.
+
+=== Step 1: View Descheduler Configuration
+
+Check if the Descheduler Operator is installed and view its configuration:
+
+[source,bash]
+----
+# View Descheduler custom resources
+# (only administrators can create or change them,
+# but you can view them)
+oc get kubedescheduler -n openshift-kube-descheduler-operator
+
+# View the cluster Descheduler configuration
+oc get kubedescheduler cluster \
+  -n openshift-kube-descheduler-operator \
+  -o yaml
+----
+
+If the Descheduler is configured, you'll see the active profiles and settings.
+
+=== Step 2: Examine Descheduler Profiles
+
+View the profiles that are enabled in the Descheduler configuration:
+
+[source,bash]
+----
+# View enabled profiles
+oc get kubedescheduler cluster \
+  -n openshift-kube-descheduler-operator \
+  -o jsonpath='{.spec.profiles}'
+
+# View full Descheduler spec
+oc get kubedescheduler cluster \
+  -n openshift-kube-descheduler-operator \
+  -o jsonpath='{.spec}' |
+  jq .
+----
+
+Note which profiles are active. The available profiles include:
+
+* AffinityAndTaints
+* TopologyAndDuplicates
+* SoftTopologyAndDuplicates
+* LifecycleAndUtilization
+* LongLifecycle
+* CompactAndScale
+* KubeVirtRelieveAndMigrate
+* EvictPodsWithPVC
+* EvictPodsWithLocalStorage
+
+=== Step 3: View Descheduler Settings
+
+Examine the Descheduler configuration settings:
+
+[source,bash]
+----
+# View descheduling interval
+oc get kubedescheduler cluster \
+  -n openshift-kube-descheduler-operator \
+  -o jsonpath='{.spec.deschedulingIntervalSeconds}'
+
+# View descheduler mode (Predictive or Automatic)
+oc get kubedescheduler cluster \
+  -n openshift-kube-descheduler-operator \
+  -o jsonpath='{.spec.mode}'
+
+# View eviction limits
+oc get kubedescheduler cluster \
+  -n openshift-kube-descheduler-operator \
+  -o jsonpath='{.spec.evictionLimits}'
+----
+
+=== Step 4: View Descheduler Operator Status
+
+Check the status of the Descheduler Operator:
+
+[source,bash]
+----
+# View Descheduler Operator deployment
+oc get deployment -n openshift-kube-descheduler-operator
+
+# View Descheduler pods
+oc get pods -n openshift-kube-descheduler-operator
+
+# View Descheduler Operator logs
+oc logs \
+  -n openshift-kube-descheduler-operator \
+  -l name=descheduler-operator \
+  --tail=50
+----
+
+=== Step 5: Understand Descheduler Behavior
+
+Create a deployment to observe how descheduling might affect it:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: descheduler-test
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: descheduler-test
+  template:
+    metadata:
+      labels:
+        app: descheduler-test
+    spec:
+      containers:
+      - name: app
+        image: quay.io/nginx/nginx-unprivileged:latest
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+----
+
+[source,bash]
+----
+oc apply -f descheduler-test.yaml
+oc get pods \
+  -l app=descheduler-test \
+  -o wide
+----
+
+Monitor the pods to see their distribution across nodes. If the Descheduler is active with certain profiles, it may move pods to optimize cluster balance.
+
+=== Step 6: Check for Descheduling Events
+
+Look for descheduling-related events:
+
+[source,bash]
+----
+# View events recorded by the descheduler in your project
+oc get events \
+  --field-selector reportingComponent=sigs.k8s.io.descheduler
+
+# View recent events for your test deployment
+oc get events --field-selector involvedObject.name=descheduler-test
+
+# Watch pod movements
+oc get pods \
+  -l app=descheduler-test \
+  -o wide \
+  -w
+----
+
+Note: If the Descheduler is in Predictive mode, it will simulate evictions but not actually move pods. Only Automatic mode performs actual evictions and records an event for each one; the event reason is the name of the strategy that evicted the pod (for example, `RemovePodsViolatingInterPodAntiAffinity`). The descheduler needs at least two ready nodes: on a single-node cluster it skips every cycle and evicts nothing.
+
+=== Step 7: Example Descheduler Configuration
+
+NOTE: Creating or modifying the Descheduler requires administrator privileges. This example shows what a Descheduler configuration might look like:
+
+[source,yaml]
+----
+apiVersion: operator.openshift.io/v1
+kind: KubeDescheduler
+metadata:
+  name: cluster
+  namespace: openshift-kube-descheduler-operator
+  annotations:
+    do-not-deploy: "true"
+spec:
+  managementState: Managed
+  deschedulingIntervalSeconds: 3600
+  profiles:
+  - AffinityAndTaints
+  - TopologyAndDuplicates
+  mode: Automatic
+  evictionLimits:
+    total: 10
+    node: 5
+----
+
+This configuration would:
+
+* Run descheduling every hour (3600 seconds)
+* Use the AffinityAndTaints and TopologyAndDuplicates profiles
+* Actually evict pods (Automatic mode)
+* Limit evictions to 10 total and 5 per node per run
+
+=== Step 8: Clean Up
+
+Remove the test deployment:
+
+[source,bash]
+----
+oc delete deployment descheduler-test
+----

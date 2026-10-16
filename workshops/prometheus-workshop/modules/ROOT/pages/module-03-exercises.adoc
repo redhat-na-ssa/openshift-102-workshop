@@ -1,0 +1,278 @@
+= Exercises
+:hardbreaks-option:
+
+== Exercise 1: Basic Aggregations
+
+Practice using basic aggregation functions to summarize metrics. As in the module content, the queries use `container!=""` and `container!="POD"` so that each series is exactly one container, and `rate()` to turn the CPU counter into current CPU usage.
+
+=== Step 1: Sum Aggregation
+
+Write a query to calculate the total memory usage across all containers in your cluster:
+
+[source,promql]
+----
+sum(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+})
+----
+
+Execute this query in Prometheus and observe the result.
+
+=== Step 2: Sum by Namespace
+
+Modify the query to show total memory usage per namespace:
+
+[source,promql]
+----
+sum(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+----
+
+Compare the results with the previous query. How many namespaces do you have?
+
+=== Step 3: Average Memory Usage
+
+Write a query to calculate the average memory usage per namespace:
+
+[source,promql]
+----
+avg(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+----
+
+Compare the average with the sum. What insights can you draw?
+
+== Exercise 2: Min, Max, and Count
+
+Practice using min, max, and count aggregation functions.
+
+=== Step 1: Maximum Memory Usage
+
+Find the maximum memory usage per namespace:
+
+[source,promql]
+----
+max(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+----
+
+Which namespace has the highest maximum memory usage?
+
+=== Step 2: Minimum Memory Usage
+
+Find the minimum memory usage per namespace:
+
+[source,promql]
+----
+min(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+----
+
+=== Step 3: Count Containers
+
+Count the number of containers per namespace:
+
+[source,promql]
+----
+count(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+----
+
+Which namespace has the most containers?
+
+== Exercise 3: Statistical Aggregations
+
+Practice using statistical functions like quantiles and standard deviation.
+
+=== Step 1: Median Memory Usage
+
+Calculate the median (50th percentile) memory usage per namespace:
+
+[source,promql]
+----
+quantile(0.50, container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+----
+
+=== Step 2: 95th Percentile
+
+Calculate the 95th percentile memory usage per namespace:
+
+[source,promql]
+----
+quantile(0.95, container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+----
+
+Compare this with the maximum values. What does this tell you about the distribution?
+
+=== Step 3: Standard Deviation
+
+Calculate the standard deviation of memory usage per namespace:
+
+[source,promql]
+----
+stddev(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+----
+
+Which namespace has the most variable memory usage?
+
+== Exercise 4: Top-K and Bottom-K
+
+Practice identifying the top and bottom resource consumers.
+
+=== Step 1: Top 5 Memory Consumers
+
+Find the top 5 containers by memory usage:
+
+[source,promql]
+----
+topk(5, container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+})
+----
+
+Note which containers are using the most memory.
+
+=== Step 2: Top 3 Namespaces by Total Memory
+
+Find the top 3 namespaces by total memory usage:
+
+[source,promql]
+----
+topk(3, sum(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace))
+----
+
+=== Step 3: Bottom 5 CPU Consumers
+
+Find the bottom 5 containers by CPU usage:
+
+[source,promql]
+----
+bottomk(5, rate(container_cpu_usage_seconds_total{
+  container!="",
+  container!="POD"
+}[5m]))
+----
+
+== Exercise 5: Combining Aggregations
+
+Practice combining multiple aggregation functions and filters.
+
+=== Step 1: Average of Maximums
+
+For each namespace, calculate the average memory usage of the largest container in each pod. The inner `max` picks the container with the highest memory usage in each pod, and the outer `avg` averages those values over the pods of the namespace:
+
+[source,promql]
+----
+avg(max(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace, pod)) by (namespace)
+----
+
+This shows how much memory the largest container of a typical pod in each namespace uses. It is a snapshot at the evaluation time, not a peak over time: `max` compares containers with each other, not samples over time. Module 4 introduces `max_over_time()`, which finds the peak of each series over a time range.
+
+=== Step 2: Filtered Aggregation
+
+Calculate the total memory usage only for namespaces that match a specific pattern (e.g., starting with "openshift-"):
+
+[source,promql]
+----
+sum(container_memory_working_set_bytes{
+  namespace=~"^openshift-.*",
+  container!="",
+  container!="POD"
+}) by (namespace)
+----
+
+Adjust the pattern to match namespaces in your cluster.
+
+=== Step 3: Multi-Label Grouping
+
+Group memory usage by both namespace and node:
+
+[source,promql]
+----
+sum(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace, node)
+----
+
+This shows how memory is distributed across nodes within each namespace.
+
+== Exercise 6: OpenShift-Specific Aggregations
+
+Practice writing aggregation queries specific to OpenShift metrics.
+
+=== Step 1: Pod Count per Namespace
+
+Count the number of pods in each namespace:
+
+[source,promql]
+----
+count(kube_pod_info) by (namespace)
+----
+
+=== Step 2: Total CPU per Node
+
+Calculate the total CPU usage per node:
+
+[source,promql]
+----
+sum(rate(container_cpu_usage_seconds_total{
+  container!="",
+  container!="POD"
+}[5m])) by (node)
+----
+
+Which node has the highest CPU usage?
+
+=== Step 3: Average Memory per Node
+
+Calculate the average memory usage per node:
+
+[source,promql]
+----
+avg(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (node)
+----
+
+Compare this with the total CPU per node. Are the nodes balanced?
+
+== Verification
+
+After completing these exercises, verify your understanding:
+
+* Can you calculate sums, averages, and counts across time series?
+* Can you use min, max, and quantile functions?
+* Can you identify top and bottom resource consumers?
+* Can you combine multiple aggregation functions?
+* Can you group metrics by multiple labels?
+
+If you can answer yes to all these questions, you are ready to proceed to the next module on advanced query patterns.

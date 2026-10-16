@@ -6,7 +6,7 @@ fullnameOverride: ""
 image:
   # Override to your mirrored registry in disconnected environments.
   # Release workflow pushes to ghcr.io/<owner>/openshift-102:<tag>
-  repository: ghcr.io/shpwrck/openshift-102
+  repository: ghcr.io/redhat-na-ssa/openshift-102
   # Defaults to chart appVersion when empty.
   tag: ""
   pullPolicy: IfNotPresent
@@ -50,7 +50,7 @@ tools:
   enabled: true
   replicaCount: 1
   image:
-    repository: ghcr.io/shpwrck/openshift-102-tools
+    repository: ghcr.io/redhat-na-ssa/openshift-102-tools
     # Defaults to the showroom image tag (values.image.tag) or chart appVersion when empty.
     tag: ""
     pullPolicy: IfNotPresent

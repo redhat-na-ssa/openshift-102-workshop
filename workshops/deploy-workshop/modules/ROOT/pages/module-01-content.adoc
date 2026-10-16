@@ -1,0 +1,470 @@
+= Pod Scheduling Fundamentals
+:hardbreaks-option:
+
+The Kubernetes scheduler is responsible for assigning pods to nodes in your cluster. Understanding how scheduling works is fundamental to managing deployments effectively. This module explores the scheduling process, how to use secondary schedulers for specialized workload requirements, and how pod priority and preemption decide which pods run when resources are scarce.
+
+== The Scheduling Process
+
+When you create a pod, it enters a `Pending` state until the scheduler assigns it to a node. The scheduling process consists of two main phases:
+
+=== Filtering Phase
+
+During the filtering phase, the scheduler evaluates all nodes and filters out those that cannot host the pod. A node is filtered out if:
+
+* It lacks sufficient resources (CPU, memory, storage)
+* It has taints that the pod cannot tolerate
+* It doesn't match node selectors or node affinity rules
+* It has other constraints that prevent pod placement
+
+=== Scoring Phase
+
+After filtering, the scheduler scores each remaining node based on various factors:
+
+* Resource availability and balance
+* Pod affinity and anti-affinity preferences
+* Node preferences and topology constraints
+* Inter-pod affinity requirements
+
+The node with the highest score is selected for pod placement.
+
+== Secondary Scheduler Operator
+
+The Secondary Scheduler Operator enables you to deploy and manage additional schedulers alongside the default Kubernetes scheduler. This allows you to create specialized schedulers with custom policies and behaviors for different workload types.
+
+=== Understanding Secondary Schedulers
+
+Secondary schedulers run in parallel with the default scheduler, each with their own scheduling policies and configurations. Pods can specify which scheduler to use via the `schedulerName` field in their pod specification.
+
+Benefits of using secondary schedulers include:
+
+* **Workload-Specific Policies**: Different schedulers can have different scoring algorithms and filters
+* **Isolation**: Critical workloads can use dedicated schedulers with guaranteed resources
+* **Custom Logic**: Implement domain-specific scheduling logic without modifying the default scheduler
+* **Testing**: Test new scheduling policies without affecting the default scheduler
+
+=== How Secondary Schedulers Work
+
+When a pod specifies a secondary scheduler name, only that scheduler picks up the pod; the default scheduler ignores it. Each scheduler operates independently:
+
+1. **Pod Creation**: Pod is created with `schedulerName` specified
+2. **Scheduler Selection**: The scheduler whose name matches `schedulerName` picks up the pod
+3. **Scheduling Process**: Secondary scheduler evaluates nodes using its own policies
+4. **Node Binding**: Scheduler binds pod to selected node
+5. **Pod Execution**: Kubelet on the selected node starts the pod
+
+=== Using Secondary Schedulers
+
+To use a secondary scheduler, specify the scheduler name in your pod or deployment:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secondary-scheduled-pod
+spec:
+  schedulerName: my-custom-scheduler
+  containers:
+  - name: app
+    image: myapp:latest
+----
+
+For deployments:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deployment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      schedulerName: my-custom-scheduler
+      containers:
+      - name: app
+        image: myapp:latest
+----
+
+=== Secondary Scheduler Configuration
+
+Secondary schedulers can be configured with custom profiles, plugins, and scoring strategies. The configuration is typically managed through ConfigMaps or the scheduler's deployment configuration.
+
+Example scheduler configuration. With the Secondary Scheduler Operator, the ConfigMap must be in the `openshift-secondary-scheduler-operator` namespace, and the `SecondaryScheduler` resource refers to it by name in `spec.schedulerConfig`:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: secondary-scheduler-config
+  namespace: openshift-secondary-scheduler-operator
+data:
+  config.yaml: |
+    apiVersion: kubescheduler.config.k8s.io/v1
+    kind: KubeSchedulerConfiguration
+    profiles:
+    - schedulerName: my-custom-scheduler
+      plugins:
+        score:
+          enabled:
+          - name: NodeResourcesFit
+            weight: 2
+          - name: NodeAffinity
+            weight: 3
+          - name: PodTopologySpread
+            weight: 1
+        filter:
+          enabled:
+          - name: NodeResourcesFit
+          - name: NodeAffinity
+          - name: TaintToleration
+      pluginConfig:
+      - name: NodeResourcesFit
+        args:
+          scoringStrategy:
+            type: MostAllocated
+            resources:
+            - name: cpu
+              weight: 1
+            - name: memory
+              weight: 1
+----
+
+=== Use Cases for Secondary Schedulers
+
+==== High-Priority Workloads
+
+Create a dedicated scheduler for high-priority workloads with aggressive resource allocation:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: critical-pod
+spec:
+  schedulerName: high-priority-scheduler
+  priorityClassName: high-priority
+  containers:
+  - name: app
+    image: critical-app:latest
+    resources:
+      requests:
+        cpu: "2"
+        memory: "4Gi"
+----
+
+==== Batch Workloads
+
+Use a secondary scheduler optimized for batch jobs with different scoring strategies:
+
+[source,yaml]
+----
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: batch-job
+spec:
+  template:
+    spec:
+      schedulerName: batch-scheduler
+      containers:
+      - name: worker
+        image: batch-worker:latest
+      restartPolicy: Never
+----
+
+==== GPU Workloads
+
+Dedicated scheduler for GPU workloads with specialized node selection:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-workload
+spec:
+  schedulerName: gpu-scheduler
+  containers:
+  - name: gpu-app
+    image: gpu-app:latest
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+----
+
+=== Verifying Scheduler Assignment
+
+You can verify which scheduler handled a pod:
+
+[source,bash]
+----
+# Check pod scheduler name
+oc get pod <pod-name> -o jsonpath='{.spec.schedulerName}'
+
+# View scheduler events
+oc describe pod <pod-name> | grep -i scheduler
+
+# Check secondary scheduler logs
+oc logs \
+  -n openshift-secondary-scheduler-operator \
+  -l app=secondary-scheduler
+----
+
+=== Scheduler Selection Behavior
+
+If a pod specifies a scheduler name that doesn't exist or isn't running:
+
+* The pod remains in `Pending` state
+* No scheduling events are recorded, because no scheduler picks up the pod
+* The default scheduler will not handle the pod automatically
+
+Always ensure the specified scheduler is deployed and running before creating pods that reference it.
+
+=== Best Practices for Secondary Schedulers
+
+* Use secondary schedulers for workloads with specific scheduling requirements
+* Ensure secondary schedulers are highly available (multiple replicas)
+* Monitor secondary scheduler performance and resource usage
+* Document which workloads use which schedulers
+* Test scheduler configurations thoroughly before deploying to production
+* Use descriptive scheduler names that indicate their purpose
+* Consider scheduler resource requirements when planning cluster capacity
+
+== Pod Priority and Preemption
+
+Pod priority and preemption allow you to influence the relative importance of pods and enable higher-priority pods to evict lower-priority pods when resources are constrained.
+
+=== Understanding Pod Priority
+
+Pod priority determines the relative importance of pods during scheduling and resource contention. Higher-priority pods are scheduled before lower-priority pods, and when resources are insufficient, lower-priority pods may be preempted (evicted) to make room for higher-priority pods.
+
+=== Priority Classes
+
+Priority classes define priority levels that can be assigned to pods:
+
+[source,yaml]
+----
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: high-priority
+value: 1000
+globalDefault: false
+description: "High priority class for critical workloads"
+----
+
+Key parameters:
+
+* **value**: The priority value (higher numbers = higher priority)
+* **globalDefault**: If true, this priority class is used for pods without a priorityClassName
+* **description**: Human-readable description of the priority class
+
+Priority values can range from -2147483648 to 1000000000 (inclusive). Values above 1000000000 are reserved for system-level priority classes such as `system-cluster-critical` (2000000000) and `system-node-critical` (2000001000).
+
+=== Using Priority Classes
+
+Assign priority to pods by specifying a priority class:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: high-priority-pod
+spec:
+  priorityClassName: high-priority
+  containers:
+  - name: app
+    image: myapp:latest
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+----
+
+For deployments:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: critical-deployment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: critical
+  template:
+    metadata:
+      labels:
+        app: critical
+    spec:
+      priorityClassName: high-priority
+      containers:
+      - name: app
+        image: myapp:latest
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+----
+
+=== Preemption
+
+Preemption occurs when a higher-priority pod cannot be scheduled because nodes lack sufficient resources. The scheduler may evict lower-priority pods to make room for the higher-priority pod.
+
+Preemption behavior:
+
+* Only pods with lower priority can be preempted
+* Preemption respects Pod Disruption Budgets (PDBs) on a best-effort basis
+* Preempted pods are gracefully terminated
+* Preemption only occurs when necessary for scheduling higher-priority pods
+
+=== Preemption Scenarios
+
+Preemption can occur in several scenarios:
+
+==== Insufficient Resources
+
+When a high-priority pod requires resources that are currently allocated to lower-priority pods:
+
+[source,yaml]
+----
+# Low priority class (the high-priority class is defined above)
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: low-priority
+value: 100
+globalDefault: false
+description: "Low priority class for best-effort workloads"
+---
+# Low priority pod running
+apiVersion: v1
+kind: Pod
+metadata:
+  name: low-priority-pod
+spec:
+  priorityClassName: low-priority
+  containers:
+  - name: app
+    image: myapp:latest
+    resources:
+      requests:
+        cpu: "2"
+        memory: "4Gi"
+---
+# High priority pod that needs the same resources
+apiVersion: v1
+kind: Pod
+metadata:
+  name: high-priority-pod
+spec:
+  priorityClassName: high-priority
+  containers:
+  - name: app
+    image: critical-app:latest
+    resources:
+      requests:
+        cpu: "2"
+        memory: "4Gi"
+----
+
+If the high-priority pod cannot be scheduled, the scheduler may preempt the low-priority pod.
+
+==== Node Resource Constraints
+
+When nodes are at capacity and a high-priority pod needs to be scheduled:
+
+[source,bash]
+----
+# Check node resource usage
+oc describe nodes | grep -A 5 "Allocated resources"
+
+# View pods by priority
+oc get pods --all-namespaces --sort-by=.spec.priority
+----
+
+The scheduler evaluates which lower-priority pods can be preempted to accommodate the higher-priority pod.
+
+=== Preemption Process
+
+When preemption occurs:
+
+1. **Evaluation**: Scheduler identifies lower-priority pods that can be preempted
+2. **PDB Check**: Prefers victims whose eviction won't violate Pod Disruption Budgets (best effort, not guaranteed)
+3. **Graceful Termination**: Sends termination signal to preempted pods
+4. **Resource Release**: Waits for resources to be freed
+5. **Scheduling**: Schedules the higher-priority pod
+
+=== Viewing Priority and Preemption
+
+Monitor pod priority and preemption events:
+
+[source,bash]
+----
+# View pod priority
+oc get pod <pod-name> -o jsonpath='{.spec.priorityClassName}'
+oc get pod <pod-name> -o jsonpath='{.spec.priority}'
+
+# View all priority classes
+oc get priorityclasses
+
+# View preemption events
+oc get events --field-selector reason=Preempted
+
+# Check for preempted pods
+oc get pods --all-namespaces \
+  --field-selector=status.phase=Failed |
+  grep Preempted
+----
+
+=== Priority Class Best Practices
+
+* Use priority classes to distinguish critical workloads from best-effort workloads
+* Create a small number of well-defined priority levels
+* Document priority class usage and policies
+* Avoid using `globalDefault: true` unless necessary
+* Monitor preemption events to understand cluster behavior
+* Use Pod Disruption Budgets to protect important workloads from preemption
+* Test priority configurations in non-production environments
+* Consider resource requirements when assigning priorities
+
+=== Priority and Resource Requests
+
+Priority works in conjunction with resource requests:
+
+* Pods without resource requests cannot preempt pods with requests
+* Priority alone doesn't guarantee scheduling; resources must be available
+* Higher-priority pods still need sufficient resources to be scheduled
+* Preemption only occurs when lower-priority pods can be evicted
+
+Example:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: high-priority-no-requests
+spec:
+  priorityClassName: high-priority
+  containers:
+  - name: app
+    image: myapp:latest
+    # No resource requests - cannot preempt other pods
+----
+
+This pod has high priority but cannot preempt other pods because it has no resource requests.
+

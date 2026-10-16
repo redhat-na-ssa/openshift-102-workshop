@@ -11,13 +11,13 @@ content:
     - url: .
       start_path: content/openshift-102
     - url: .
-      start_path: content/bundled/helm-workshop
+      start_path: workshops/helm-workshop
     - url: .
-      start_path: content/bundled/deploy-workshop
+      start_path: workshops/deploy-workshop
     - url: .
-      start_path: content/bundled/istio-workshop
+      start_path: workshops/istio-workshop
     - url: .
-      start_path: content/bundled/prometheus-workshop
+      start_path: workshops/prometheus-workshop
 
 ui:
   bundle:
@@ -25,6 +25,16 @@ ui:
     snapshot: true
   supplemental_files:
     - path: ./content/openshift-102/supplemental-ui
+    - path: css/site-extra.css
+      contents: ./content/openshift-102/supplemental-ui/css/site-extra.css
+    - path: partials/head-meta.hbs
+      contents: ./content/openshift-102/supplemental-ui/partials/head-meta.hbs
+    - path: partials/footer.hbs
+      contents: ./content/openshift-102/supplemental-ui/partials/footer.hbs
+    - path: partials/build-info.hbs
+      contents: ./content/openshift-102/supplemental-ui/partials/build-info.hbs
+    - path: img/favicon.ico
+      contents: ./content/openshift-102/supplemental-ui/img/favicon.ico
     - path: ./content/openshift-102/lib
     - path: .nojekyll
     - path: ui.yml

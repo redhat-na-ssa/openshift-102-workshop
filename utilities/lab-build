@@ -2,7 +2,6 @@
 #
 
 echo "Starting build process..."
-./scripts/verify-submodules.sh
 echo "Removing old site..."
 rm -rf ./www/*
 echo "Building new site..."
