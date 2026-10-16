@@ -1,0 +1,16 @@
+* xref:index.adoc[Introduction]
+* xref:setup-requirements.adoc[Setup Requirements]
+ifdef::openshift-102-showroom[]
+* xref:master@openshift-102:ROOT:cli-tools.adoc[Shared CLI tools]
+endif::[]
+* Module 1: Background and Review
+  ** xref:module-01-content.adoc[Content]
+* Module 2: Helm CLI
+  ** xref:module-02-content.adoc[Content]
+  ** xref:module-02-exercises.adoc[Exercises]
+* Module 3: File Structure and Templating
+  ** xref:module-03-content.adoc[Content]
+  ** xref:module-03-exercises.adoc[Exercises]
+* Module 4: Storage and Distribution of Charts
+  ** xref:module-04-content.adoc[Content]
+  ** xref:module-04-exercises.adoc[Exercises]

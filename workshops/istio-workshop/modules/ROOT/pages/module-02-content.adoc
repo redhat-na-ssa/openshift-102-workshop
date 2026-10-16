@@ -1,0 +1,290 @@
+= Module 2: Traffic Management
+:hardbreaks-option:
+
+This module explores how Istio manages traffic flow in your service mesh. You will learn how external traffic enters the mesh through Gateways, how internal traffic is routed using VirtualServices, and how these components work together to provide sophisticated traffic management capabilities.
+
+== How Traffic Enters the Mesh: Gateways
+
+A fundamental question when working with service meshes is: "How does traffic get onto the mesh?" In Istio, the answer is through *Gateways*.
+
+=== What is a Gateway?
+
+A Gateway is an Istio resource that configures a load balancer to handle incoming and outgoing HTTP/TCP traffic. Gateways operate at the edge of the service mesh, acting as the entry and exit points for traffic. They allow you to expose services to external clients and control how traffic enters and leaves your mesh.
+
+Unlike traditional Kubernetes Ingress resources, Istio Gateways provide more sophisticated traffic management capabilities. They work in conjunction with VirtualServices to route traffic based on various criteria such as host headers, URI paths, and other HTTP attributes.
+
+=== Gateway vs. OpenShift Routes
+
+In OpenShift environments, you may be familiar with Routes, which provide external access to services. Istio Gateways serve a similar purpose but offer significantly more functionality:
+
+* *Protocol Support*: Gateways support HTTP, HTTPS, gRPC, WebSocket, TCP, and TLS protocols, while Routes are primarily HTTP/HTTPS focused
+* *Traffic Routing*: Gateways work with VirtualServices to provide advanced routing rules, including path-based routing, header-based routing, and weighted traffic splitting
+* *Security Features*: Gateways integrate with Istio's security features, including mTLS termination, authentication, and authorization policies
+* *Observability*: All traffic through Gateways is automatically instrumented with Istio's observability features
+* *Multi-Protocol*: Gateways can handle multiple protocols on different ports simultaneously
+
+While OpenShift Routes are simpler and sufficient for basic use cases, Gateways provide the foundation for advanced traffic management patterns that are essential in microservices architectures.
+
+=== Gateway Configuration
+
+A Gateway resource defines which ports to expose, the protocols to use, and which hosts are allowed. Here's a basic example:
+
+[source,yaml]
+----
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: my-gateway
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "*"
+----
+
+Key components of a Gateway:
+
+* *Selector*: Specifies which Istio ingress gateway pods should handle this Gateway's traffic (typically `istio: ingressgateway`)
+* *Servers*: Defines the ports, protocols, and hosts that the Gateway will accept
+* *Hosts*: Specifies the destination hosts for incoming traffic (can use wildcards)
+
+=== Gateway and Connectivity
+
+Gateways are the primary mechanism for external connectivity in Istio. They enable:
+
+* Ingress traffic from external clients to services within the mesh
+* Egress traffic from services within the mesh to external services
+* Multi-cluster connectivity (when configured with additional components)
+
+For advanced connectivity scenarios, such as connecting multiple clusters or integrating with external service meshes, Istio provides additional connectivity features. These advanced connectivity topics, including multi-cluster setups and service mesh federation, are covered in specialized workshops and are beyond the scope of this module.
+
+=== Gateway Best Practices
+
+When configuring Gateways, consider the following best practices:
+
+* Use specific host names rather than wildcards in production environments for better security
+* Configure TLS termination at the Gateway for HTTPS traffic
+* Use Gateway resources in combination with VirtualServices for complete traffic control
+* Leverage Istio's security features to protect Gateway endpoints
+* Monitor Gateway metrics and logs for traffic patterns and potential issues
+
+== VirtualServices: Routing Traffic Within the Mesh
+
+Once traffic enters the mesh through a Gateway (or originates from within the mesh), VirtualServices control how that traffic is routed to your services.
+
+=== What is a VirtualService?
+
+A VirtualService is an Istio resource that defines a set of traffic routing rules to apply when a host is addressed. VirtualServices are a key component of Istio's traffic management, allowing you to configure how requests are routed to service versions.
+
+Think of a VirtualService as a "virtual" representation of your service that defines the routing rules, while the actual Kubernetes Service represents the "real" service endpoints. This abstraction allows you to implement sophisticated routing patterns without modifying your application code.
+
+=== VirtualService Capabilities
+
+VirtualServices provide powerful routing capabilities:
+
+* *Path-based Routing*: Route traffic to different services based on the URI path
+* *Header-based Routing*: Route traffic based on HTTP headers (useful for A/B testing, canary deployments)
+* *Weighted Traffic Splitting*: Distribute traffic across multiple service versions with specified percentages
+* *Fault Injection*: Introduce delays or errors for testing resilience
+* *Request Matching*: Match requests based on various criteria (URI, headers, query parameters, etc.)
+* *Traffic Mirroring*: Send a copy of traffic to another service without affecting the primary flow
+
+=== Basic VirtualService Example
+
+Here's a simple VirtualService that routes all traffic to a service:
+
+[source,yaml]
+----
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: my-service
+spec:
+  hosts:
+  - my-service
+  http:
+  - route:
+    - destination:
+        host: my-service
+        subset: v1
+      weight: 100
+----
+
+This VirtualService routes all traffic for the `my-service` host to the `v1` subset of the service.
+
+=== VirtualService with Path-based Routing
+
+VirtualServices can route traffic to different services based on the request path:
+
+[source,yaml]
+----
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: my-app
+spec:
+  hosts:
+  - my-app.example.com
+  http:
+  - match:
+    - uri:
+        prefix: "/api/v1"
+    route:
+    - destination:
+        host: api-v1-service
+  - match:
+    - uri:
+        prefix: "/api/v2"
+    route:
+    - destination:
+        host: api-v2-service
+  - route:
+    - destination:
+        host: frontend-service
+----
+
+This example routes:
+
+* Requests to `/api/v1/*` to `api-v1-service`
+* Requests to `/api/v2/*` to `api-v2-service`
+* All other requests to `frontend-service`
+
+=== VirtualService with Weighted Traffic Splitting
+
+One of the most powerful features of VirtualServices is weighted traffic splitting, which is essential for canary deployments and gradual rollouts:
+
+[source,yaml]
+----
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: my-service
+spec:
+  hosts:
+  - my-service
+  http:
+  - route:
+    - destination:
+        host: my-service
+        subset: v1
+      weight: 90
+    - destination:
+        host: my-service
+        subset: v2
+      weight: 10
+----
+
+This configuration routes 90% of traffic to version 1 and 10% to version 2, allowing you to gradually roll out a new version while monitoring its behavior.
+
+=== VirtualService Matching Rules
+
+VirtualServices support sophisticated matching rules to route traffic based on various request attributes:
+
+* *URI Matching*: Match based on exact, prefix, or regex patterns
+* *Header Matching*: Match based on HTTP headers (exact, prefix, regex, or presence)
+* *Query Parameters*: Match based on query string parameters
+* *Method Matching*: Match based on HTTP method (GET, POST, etc.)
+* *Authority Matching*: Match based on the Host header
+* *Port Matching*: Match based on the destination port
+
+Multiple match conditions can be combined, and all must be satisfied for a match to occur.
+
+=== VirtualService and DestinationRules
+
+VirtualServices work closely with DestinationRules. While VirtualServices define *where* traffic should go, DestinationRules define *how* traffic should be handled when it reaches the destination:
+
+* *Load Balancing*: Configure load balancing algorithms (round-robin, least-request, etc.)
+* *Connection Pool Settings*: Configure connection pool sizes and timeouts
+* *Circuit Breakers*: Configure circuit breaker settings for fault tolerance
+* *Subsets*: Define service subsets (versions) for traffic routing
+* *TLS Settings*: Configure TLS/mTLS settings for the destination
+
+=== VirtualService Best Practices
+
+When working with VirtualServices:
+
+* Always define a default route (the last route without a match) to handle unmatched traffic
+* Use meaningful names that reflect the service or application being routed
+* Keep routing rules simple and maintainable
+* Test routing rules in non-production environments first
+* Use subsets defined in DestinationRules for version-based routing
+* Monitor traffic patterns to validate routing behavior
+* Document complex routing logic for team understanding
+
+== Gateway and VirtualService Together
+
+Gateways and VirtualServices work together to provide complete traffic management:
+
+1. *Gateway*: Defines the entry point and which hosts/ports to accept
+2. *VirtualService*: Defines the routing rules for traffic matching those hosts
+
+When a request comes through a Gateway, the VirtualService matching the host header determines where the traffic is routed. This separation of concerns allows for flexible and powerful traffic management.
+
+=== Example: Complete Ingress Configuration
+
+Here's a complete example showing a Gateway and VirtualService working together:
+
+[source,yaml]
+----
+# Gateway: Defines the entry point
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: my-gateway
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - myapp.example.com
+
+---
+# VirtualService: Defines routing rules
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: myapp
+spec:
+  hosts:
+  - myapp.example.com
+  gateways:
+  - my-gateway
+  http:
+  - match:
+    - uri:
+        prefix: "/api"
+    route:
+    - destination:
+        host: api-service
+  - route:
+    - destination:
+        host: frontend-service
+----
+
+This configuration:
+
+* Accepts traffic for `myapp.example.com` on port 80 through the Gateway
+* Routes `/api/*` requests to `api-service`
+* Routes all other requests to `frontend-service`
+
+== Summary
+
+In this module, you have learned:
+
+* Gateways are the entry and exit points for traffic in the Istio service mesh
+* Gateways provide more functionality than traditional Routes, including advanced routing, security, and observability
+* VirtualServices define routing rules for traffic within the mesh
+* VirtualServices support path-based routing, weighted traffic splitting, and sophisticated matching rules
+* Gateways and VirtualServices work together to provide complete traffic management
+* DestinationRules complement VirtualServices by defining how traffic is handled at the destination
+
+In the next module, you will explore additional traffic management features and advanced routing patterns.

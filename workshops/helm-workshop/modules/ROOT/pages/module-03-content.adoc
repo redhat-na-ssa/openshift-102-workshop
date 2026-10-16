@@ -1,0 +1,114 @@
+= File Structure and Templating
+:hardbreaks-option:
+
+For detailed information about Helm chart structure and templating, refer to the https://helm.sh/docs/topics/charts/[official Helm documentation].
+
+This module provides a brief overview of the essential concepts that you will use in the exercises.
+
+== Chart Structure
+
+A Helm chart follows a standard directory structure.
+When you create a chart using `helm create`, it generates the following structure (recent Helm versions, including 3.22 and 4, also add `templates/httproute.yaml`):
+
+[source,text]
+----
+mychart/
+├── .helmignore         # Patterns to ignore when packaging
+├── Chart.yaml          # Chart metadata
+├── values.yaml         # Default configuration values
+├── charts/             # Chart dependencies (optional)
+└── templates/          # Template files
+    ├── NOTES.txt       # Installation notes printed after install
+    ├── _helpers.tpl    # Named template helpers
+    ├── deployment.yaml
+    ├── hpa.yaml
+    ├── ingress.yaml
+    ├── service.yaml
+    ├── serviceaccount.yaml
+    └── tests/
+        └── test-connection.yaml
+----
+
+=== Key Files and Directories
+
+* **Chart.yaml**: Contains metadata about the chart, including name, version, and dependencies.
+
+* **values.yaml**: Defines default configuration values that can be overridden during installation.
+
+* **templates/**: Contains Kubernetes manifest templates written in Go template syntax.
+These templates are rendered with values from `values.yaml` and any overrides provided during installation.
+
+* **charts/**: Contains chart dependencies that are downloaded when you run `helm dependency update`.
+
+== The Power of Templating: Taking Helm to the Next Level
+
+The whole point of Helm is to prevent repetition.
+Instead of maintaining multiple nearly identical Kubernetes manifests for different environments or configurations, you create a single template that can be customized through values.
+
+Understanding how templating, functions, flow control, and syntax work together is what separates basic Helm users from advanced practitioners.
+These concepts enable you to:
+
+* **Eliminate Duplication**: Create reusable templates that adapt to different scenarios without copying and modifying files.
+
+* **Build Flexible Charts**: Design charts that can handle various deployment patterns, environments, and configurations through intelligent templating.
+
+* **Maintain Consistency**: Ensure that all deployments follow the same patterns and best practices while allowing necessary customization.
+
+* **Scale Your Knowledge**: Apply advanced patterns like template helpers, named templates, and complex conditional logic to solve sophisticated deployment challenges.
+
+Mastering templating syntax, understanding Helm's built-in functions, leveraging flow control structures, and knowing when and how to use each feature will take your Helm chart development to the next level.
+The exercises in this module will give you hands-on practice with these advanced concepts.
+
+== Critical Resources for Template Design
+
+When designing Helm templates, you will frequently reference two essential documentation resources:
+
+* https://helm.sh/docs/chart_template_guide/builtin_objects/[Built-in Objects]: This documentation describes all the objects available in templates, including `Release`, `Values`, `Chart`, `Files`, `Capabilities`, and `Template`.
+These objects provide access to release information, chart metadata, file contents, and cluster capabilities.
+
+* https://helm.sh/docs/chart_template_guide/function_list/[Template Function List]: This comprehensive reference lists all available template functions organized by category, including logic and flow control, string manipulation, dictionaries, lists, math operations, and many more.
+
+These resources are critical for designing effective templates.
+Bookmark them and refer to them regularly as you work through the exercises and develop your own charts.
+
+== Creating Reusable Template Libraries
+
+You can extend the principle of eliminating repetition beyond individual charts to your entire organization by creating shared template libraries.
+
+=== Library Charts with Template Helpers
+
+You can create Helm charts that contain only template helpers and no actual Kubernetes resources.
+These library charts serve as repositories of reusable template functions, named templates, and common patterns that can be shared across multiple charts in your organization.
+A library chart is marked with `type: library` in its `Chart.yaml`; Helm does not allow it to be installed on its own.
+
+A library chart typically contains:
+
+* Template files with named templates (using `{{- define }}` blocks)
+* Helper functions for common operations
+* Standardized patterns for labels, annotations, resource naming, and other organizational conventions
+
+These templates are not rendered as Kubernetes resources when the library chart is included as a dependency.
+Instead, they become available for use in your application charts through the `{{ include }}` function or by referencing the named templates directly.
+
+=== Using Library Charts as Dependencies
+
+By declaring library charts as dependencies in your `Chart.yaml`, you can create a uniform approach across your team.
+When you add a library chart as a dependency, all of its template helpers become available to your chart, ensuring that:
+
+* **Consistency**: All charts use the same helper functions and naming conventions.
+
+* **Maintainability**: Updates to shared templates propagate automatically to all dependent charts when dependencies are updated.
+
+* **Standardization**: Organizational best practices are encoded in reusable templates, making it easier for team members to follow established patterns.
+
+* **Efficiency**: Common operations and patterns are implemented once in the library and reused everywhere, reducing duplication and the potential for errors.
+
+This approach allows your organization to maintain a consistent Helm chart structure and deployment patterns while still allowing individual charts the flexibility to customize as needed.
+The exercises apply the same idea with a _helper subchart_: an ordinary application chart whose helpers you reuse from another chart.
+Because it is an application chart, its own resources also render in the parent chart, which a `type: library` chart would not do.
+
+== Next Steps
+
+We kept this section brief to focus on the practical use of templates.
+Let us hop into the exercises where you will get hands-on experience creating templates, using functions, implementing flow control, and sharing helpers between charts.
+

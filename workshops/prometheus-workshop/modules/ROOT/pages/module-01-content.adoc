@@ -1,0 +1,278 @@
+= Prometheus Query Language Fundamentals
+:hardbreaks-option:
+
+This module introduces you to the fundamentals of Prometheus Query Language (PromQL). You will learn the basic concepts, data types, and syntax needed to write effective Prometheus queries.
+
+== Understanding Prometheus Metrics
+
+Prometheus stores metrics as time series data. Each time series is identified by a metric name and a set of key-value pairs called labels.
+
+=== Metric Names
+
+Metric names describe what is being measured. They must follow these rules:
+
+* Contain only letters, digits, underscores, and colons
+* Start with a letter or underscore
+* Cannot be reserved keywords
+
+Examples of valid metric names:
+
+* `http_requests_total`
+* `node_cpu_seconds_total`
+* `container_memory_usage_bytes`
+
+=== Labels
+
+Labels are key-value pairs that provide additional dimensions to your metrics. They allow you to filter and aggregate data.
+
+Common label examples:
+
+* `instance` - The target being monitored
+* `job` - The job name that collected the metric
+* `namespace` - Kubernetes namespace (in OpenShift)
+* `pod` - Kubernetes pod name
+* `container` - Container name
+
+== Basic Query Syntax
+
+A PromQL query consists of a metric name, optionally followed by label selectors in curly braces `{}`.
+
+=== Simple Metric Selection
+
+To select all time series for a metric:
+
+[source,promql]
+----
+http_requests_total
+----
+
+This returns all time series with the metric name `http_requests_total`.
+
+=== Label Selectors
+
+Label selectors filter time series by matching label values. Use curly braces `{}` to specify label filters.
+
+Select all Kubernetes API server requests for a specific resource:
+
+[source,promql]
+----
+apiserver_request_total{resource="pods"}
+----
+
+=== Label Matching Operators
+
+PromQL supports several matching operators:
+
+* `=` - Exact match
+* `!=` - Not equal
+* `=~` - Regular expression match
+* `!~` - Regular expression not match
+
+Examples:
+
+[source,promql]
+----
+# Exact match
+apiserver_request_total{verb="GET"}
+
+# Not equal
+apiserver_request_total{verb!="GET"}
+
+# Regular expression match
+apiserver_request_total{verb=~"GET|POST"}
+
+# Regular expression not match
+apiserver_request_total{verb!~"GET|POST"}
+----
+
+== Data Types
+
+PromQL has four main data types:
+
+=== Instant Vector
+
+An instant vector is a set of time series, each containing a single sample at a given timestamp. This is the most common result type.
+
+Example:
+
+[source,promql]
+----
+apiserver_request_total{verb="GET"}
+----
+
+=== Range Vector
+
+A range vector is a set of time series, each containing a range of data points over time. Range vectors are used with functions like `rate()`. `[]` is used to specify the time range.
+
+Example:
+
+[source,promql]
+----
+apiserver_request_total{verb="GET"}[5m]
+----
+
+NOTE: Graphs, such as the one on the *Observe* -> *Metrics* page or the *Graph* tab of the Prometheus UI, are drawn with range queries, and a range query cannot return a range vector (`invalid expression type "range vector" for range query`). Run expressions that end in `[5m]` and similar as instant queries, for example in the *Table* tab of the Prometheus UI, or pass them to a function such as `rate()`.
+
+=== Scalar
+
+A scalar is a simple numeric floating-point value.
+
+=== String
+
+A string is a simple string value (used primarily for labels).
+
+== Time Ranges
+
+When working with range vectors, you specify a time range using duration syntax:
+
+* `s` - seconds
+* `m` - minutes
+* `h` - hours
+* `d` - days
+* `w` - weeks
+* `y` - years
+
+Examples:
+
+[source,promql]
+----
+# Last 5 minutes
+http_requests_total[5m]
+
+# Last 1 hour
+http_requests_total[1h]
+
+# Last 2 days
+http_requests_total[2d]
+----
+
+== Accessing Prometheus in OpenShift
+
+In OpenShift 4.16, you can access Prometheus through the web console or via the API.
+
+=== Accessing the Prometheus Web UI
+
+1. Log in to your OpenShift cluster web console
+2. In the *Administrator* perspective, navigate to *Observe* -> *Metrics*
+3. Enter a PromQL expression and click *Run queries*
+
+The `prometheus-k8s` route in the `openshift-monitoring` namespace serves only the `/api` path, so it cannot be used to open the Prometheus UI. Querying metrics from all namespaces requires the `cluster-monitoring-view` cluster role.
+
+In this workshop, your user has been given that role (see xref:setup-requirements.adoc[Setup Requirements]), so the Administrator perspective works for every exercise. A project user without it can use *Observe* -> *Metrics* in the *Developer* perspective instead, which shows only the metrics of the selected project and requires the `view` role (or higher) in that project; most exercises in Modules 2 to 4 return no data there because they query other namespaces.
+
+Alternatively, cluster administrators can port-forward to a Prometheus pod (the `prometheus-k8s` service does not expose port 9090). Regular users are not allowed to create port-forwards in the `openshift-monitoring` namespace.
+
+[source,bash]
+----
+oc port-forward -n openshift-monitoring pod/prometheus-k8s-0 9090:9090
+----
+
+Then open `http://localhost:9090/graph` (Prometheus 2.x, as shipped with OpenShift 4.16) or `http://localhost:9090/query` (Prometheus 3.x). Do not open the bare `http://localhost:9090`: it redirects to the web console's `/monitoring` path, which returns 404 through the port-forward.
+
+=== Using the Prometheus API
+
+You can query metrics programmatically using the Prometheus HTTP API. Which endpoint you use depends on your permissions:
+
+* *Project users* (this workshop) use the tenancy port 9092 of the Thanos Querier service. It returns only the metrics of one project.
+* *Cluster administrators* and users with the `cluster-monitoring-view` cluster role can query all namespaces through the `prometheus-k8s` route.
+
+==== Querying Your Project as a Project User
+
+The `thanos-querier` service in the `openshift-monitoring` namespace listens on port 9092 for project-scoped queries. It serves the `/api/v1/query`, `/api/v1/query_range`, `/api/v1/labels`, `/api/v1/label/<name>/values` and `/api/v1/series` endpoints, with these rules:
+
+* Every request must include the `namespace=<project>` query parameter. Requests without it are rejected.
+* The request must carry a bearer token of a user or service account that has the `view` role (or higher, such as `edit` or `admin`) in that project.
+* The proxy in front of Thanos Querier adds `namespace="<project>"` to every selector in your query, so you only ever see the series of that project, and you do not need to add the matcher yourself.
+* Send queries as `GET` requests. The proxy checks a `POST` request against the `create` verb, which the `view` role does not grant, so a `POST` is rejected with `403 Forbidden`.
+
+Port 9092 is not exposed through a route, and project users are not allowed to port-forward into the `openshift-monitoring` namespace. Instead, send the request from a pod in your own project, which can reach the service at `thanos-querier.openshift-monitoring.svc:9092`.
+
+. Store your project name and your OAuth token in shell variables. `oc whoami -t` prints a token only if you logged in with `oc login` (user name and password, or a token), not if your kubeconfig uses a client certificate:
++
+[source,bash]
+----
+NS=$(oc project -q)
+TOKEN=$(oc whoami -t)
+----
+
+. Start a small pod that has `curl` in your project:
++
+[source,bash]
+----
+oc run api-client \
+  -n "$NS" \
+  --restart=Never \
+  --image=registry.access.redhat.com/ubi9/ubi-minimal:latest \
+  --command -- sleep infinity
+
+oc wait \
+  -n "$NS" \
+  --for=condition=Ready \
+  pod/api-client
+----
+
+. Run a query from that pod. `-G` together with `--data-urlencode` sends the parameters URL-encoded in a `GET` request:
++
+[source,bash]
+----
+oc exec -n "$NS" api-client -- curl -sk -G \
+  -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode "namespace=$NS" \
+  --data-urlencode 'query=sum by (pod) (container_memory_working_set_bytes{container!="", container!="POD"})' \
+  https://thanos-querier.openshift-monitoring.svc:9092/api/v1/query
+----
+
+The response is a JSON document with the memory usage of each pod in your project.
+Right after the pod starts, the result can be empty (`"result":[]`) until its first samples are scraped; wait about a minute and run the query again. `-k` skips the certificate check, because the service certificate is signed by the cluster's internal service CA. To verify it instead, replace `-k` with `--cacert /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt`; OpenShift mounts the service CA bundle into every pod at that path.
+
+[NOTE]
+====
+Your token is part of the command line that runs inside the pod, so anyone who can run `oc exec` in your project can see it while the command runs. Delete the pod when you no longer need it:
+
+[source,bash]
+----
+oc delete pod api-client -n "$NS"
+----
+
+The exercises in later modules use the same pod; you can recreate it with the commands above.
+====
+
+==== Querying All Namespaces as a Cluster Administrator
+
+Users with the `cluster-monitoring-view` cluster role can query all namespaces through the `prometheus-k8s` route, which is reachable from outside the cluster:
+
+[source,bash]
+----
+# Get an authentication token
+TOKEN=$(oc whoami -t)
+
+# Query the Prometheus API through the route
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://prometheus-k8s-openshift-monitoring.apps.<cluster-domain>/api/v1/query?query=http_requests_total"
+----
+
+For a project user without that role, this request fails with `403 Forbidden`.
+
+== Common Built-in Metrics in OpenShift
+
+OpenShift 4.16 exposes many useful metrics. Here are some common ones:
+
+* `container_cpu_usage_seconds_total` - Cumulative CPU time used per container, in seconds (a counter)
+* `container_memory_usage_bytes` - Memory usage per container
+* `kube_pod_info` - Pod information
+* `kube_node_info` - Node information
+* `openshift_build_status_phase_total` - Phase of each OpenShift build (one series per build and phase)
+* `cluster:capacity_cpu_cores:sum` - Total CPU capacity
+
+== Summary
+
+In this module, you learned:
+
+* The structure of Prometheus metrics (metric names and labels)
+* Basic PromQL query syntax
+* Label selectors and matching operators
+* PromQL data types (instant vector, range vector, scalar, string)
+* How to specify time ranges
+* How to access Prometheus in OpenShift 4.16, both as a project user and as a cluster administrator
+
+In the next module, you will learn more advanced selector techniques and filtering patterns.

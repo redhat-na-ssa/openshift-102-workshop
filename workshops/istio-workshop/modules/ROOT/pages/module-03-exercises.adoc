@@ -1,0 +1,1166 @@
+= Module 3: Exercises
+:hardbreaks-option:
+:demo_jwt: eyJhbGciOiJSUzI1NiIsImtpZCI6IkRIRmJwb0lVcXJZOHQyenBBMnFYZkNtcjVWTzVaRXI0UnpIVV8tZW52dlEiLCJ0eXAiOiJKV1QifQ.eyJleHAiOjQ2ODU5ODk3MDAsImZvbyI6ImJhciIsImlhdCI6MTUzMjM4OTcwMCwiaXNzIjoidGVzdGluZ0BzZWN1cmUuaXN0aW8uaW8iLCJzdWIiOiJ0ZXN0aW5nQHNlY3VyZS5pc3Rpby5pbyJ9.CfNnxWP2tcnR9q0vxyxweaF3ovQYHYZl82hAUsn21bwQd9zP7c-LS9qd_vpdLG4Tn1A15NxfCjp5f7QNBUo-KC9PJqYpgGbaXhaGx7bEdFWjcwv3nZzvc7M__ZpaCERdwU7igUmJqYGBYQ51vr2njU9ZimyKkfDe3axcyiBZde7G6dabliUosJvvKOPcKIWPccCgefSj_GNfwIip3-SsFdlR7BtbVUcqR-yv-XOxJ3Uc1MI0tz3uMiiZcyPV7sNCU4KRnemRIMHVOfuvHsU60_GhGbiSFzgPTAa9WTltbnarTbxudb_YEOx12JiwYToeX0DCPb43W1tzIBxgm8NxUg
+
+This exercise section provides hands-on practice with advanced DestinationRule features and Istio security. You will learn how to configure load balancing, implement failover and circuit breaking, set up request authentication, and create authorization policies.
+
+== Prerequisites
+
+Before starting these exercises, ensure you have:
+
+* Access to an OpenShift cluster with OpenShift Service Mesh {ossm_version} (Istio {istio_version}) installed
+* Your namespace (`$NAMESPACE`) configured with sidecar injection enabled
+* The `oc` CLI tool installed and configured
+* Basic understanding of DestinationRules, VirtualServices, and Kubernetes Services
+
+== Exercise 1: Configure Load Balancing in DestinationRules
+
+In this exercise, you will configure different load balancing algorithms in DestinationRules.
+
+=== Step 1: Set Your Namespace
+
+Ensure your namespace variable is set:
+
+[source,bash,subs="attributes+"]
+----
+export NAMESPACE={user}-sandbox
+----
+
+The exercises send test requests with `oc exec` from the `curl-client` Deployment that you created in Module 1 (Exercise 1, Step 7). Check that it is running:
+
+[source,bash]
+----
+oc get deployment curl-client -n $NAMESPACE
+----
+
+=== Step 2: Deploy a Multi-Pod Service
+
+Deploy a service with multiple replicas to observe load balancing:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadtest-service
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: loadtest
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: loadtest
+        version: v1
+    spec:
+      containers:
+      - name: nginx
+        image: quay.io/nginx/nginx-unprivileged:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loadtest-service
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: loadtest
+  ports:
+  - port: 80
+    targetPort: 8080
+    name: http
+EOF
+----
+
+Wait for all pods to be ready:
+
+[source,bash]
+----
+oc get pods \
+  -n $NAMESPACE \
+  -l app=loadtest
+----
+
+=== Step 3: Create DestinationRule with Round-Robin Load Balancing
+
+Create a DestinationRule with round-robin load balancing:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: loadtest-service
+  namespace: ${NAMESPACE}
+spec:
+  host: loadtest-service
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+EOF
+----
+
+Verify the DestinationRule:
+
+[source,bash]
+----
+oc get destinationrule loadtest-service \
+  -n $NAMESPACE \
+  -o yaml
+----
+
+=== Step 4: Test Round-Robin Load Balancing
+
+Send multiple requests and observe the distribution. Check the logs to see which pod handles each request:
+
+[source,bash]
+----
+for i in {1..9}; do
+  oc exec \
+    -n $NAMESPACE \
+    deploy/curl-client \
+    -c curl -- \
+    curl -s http://loadtest-service > /dev/null
+done
+----
+
+Check the access logs to see the distribution:
+
+[source,bash]
+----
+oc logs \
+  -n $NAMESPACE \
+  -l app=loadtest \
+  -c istio-proxy \
+  --tail=20 |
+  grep -i "GET"
+----
+
+=== Step 5: Change to Least-Connection Load Balancing
+
+Update the DestinationRule to use least-connection load balancing:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: loadtest-service
+  namespace: ${NAMESPACE}
+spec:
+  host: loadtest-service
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_CONN
+EOF
+----
+
+Test the least-connection algorithm:
+
+[source,bash]
+----
+for i in {1..9}; do
+  oc exec \
+    -n $NAMESPACE \
+    deploy/curl-client \
+    -c curl -- \
+    curl -s http://loadtest-service > /dev/null
+done
+----
+
+=== Step 6: Configure Random Load Balancing
+
+Update to random load balancing:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: loadtest-service
+  namespace: ${NAMESPACE}
+spec:
+  host: loadtest-service
+  trafficPolicy:
+    loadBalancer:
+      simple: RANDOM
+EOF
+----
+
+== Exercise 2: Implement Failover and Outlier Detection
+
+In this exercise, you will configure outlier detection so that the client sidecars stop sending requests to an endpoint that returns errors, and combine it with retries so that requests fail over to a healthy endpoint.
+
+Envoy's outlier detection counts the responses that it receives from each endpoint (upstream host). Faults that a VirtualService injects are not counted: the client sidecar generates a `fault.abort` response itself without contacting an endpoint, and a `fault.delay` only postpones a request that then succeeds. This exercise therefore deploys one version of a service that really returns `503 Service Unavailable`.
+
+=== Step 1: Deploy a Healthy and a Failing Version
+
+Deploy two versions of `failover-service` behind one Service: `v1` serves the nginx welcome page, and `v2` uses an nginx configuration from a ConfigMap that answers every request with `503`:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: failover-v2-nginx
+  namespace: ${NAMESPACE}
+data:
+  default.conf: |
+    server {
+      listen 8080;
+      location / {
+        return 503;
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: failover-v1
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: failover
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: failover
+        version: v1
+    spec:
+      containers:
+      - name: nginx
+        image: quay.io/nginx/nginx-unprivileged:latest
+        ports:
+        - containerPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: failover-v2
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: failover
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: failover
+        version: v2
+    spec:
+      containers:
+      - name: nginx
+        image: quay.io/nginx/nginx-unprivileged:latest
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: nginx-conf
+          mountPath: /etc/nginx/conf.d
+      volumes:
+      - name: nginx-conf
+        configMap:
+          name: failover-v2-nginx
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: failover-service
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: failover
+  ports:
+  - port: 80
+    targetPort: 8080
+    name: http
+EOF
+----
+
+Wait for both pods to be ready and note their IP addresses:
+
+[source,bash]
+----
+oc rollout status deployment/failover-v1 -n $NAMESPACE
+oc rollout status deployment/failover-v2 -n $NAMESPACE
+oc get pods \
+  -n $NAMESPACE \
+  -l app=failover \
+  -o wide
+----
+
+=== Step 2: Create DestinationRule with Outlier Detection
+
+Create a DestinationRule with a subset for each version and outlier detection for the whole service:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: failover-service
+  namespace: ${NAMESPACE}
+spec:
+  host: failover-service
+  trafficPolicy:
+    outlierDetection:
+      consecutive5xxErrors: 3
+      interval: 10s
+      baseEjectionTime: 60s
+      maxEjectionPercent: 50
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+  - name: v2
+    labels:
+      version: v2
+EOF
+----
+
+With this configuration, an endpoint that returns three `5xx` responses in a row is ejected from the load balancing pool for 60 seconds. At most 50% of the endpoints, here one of the two, can be ejected at the same time. The subsets inherit the outlier detection settings and let you route to a single version, as in Module 2.
+
+=== Step 3: Make the Failures Visible
+
+By default, Istio retries a request that fails with `503` up to two times on a different endpoint, so the client would hardly ever see the errors of `v2`. Disable retries for `failover-service` with a VirtualService to watch the outlier detection on its own:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: failover-service
+  namespace: ${NAMESPACE}
+spec:
+  hosts:
+  - failover-service
+  http:
+  - route:
+    - destination:
+        host: failover-service
+    retries:
+      attempts: 0
+EOF
+----
+
+=== Step 4: Test Outlier Detection
+
+Send 20 requests and print the status code of each response:
+
+[source,bash]
+----
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  sh -c \
+  'for i in $(seq 1 20); do curl -s -o /dev/null -w "%{http_code}\n" http://failover-service; done'
+----
+
+The first requests are spread over both versions, so you see a mix of `200` and `503`. After the third `503` from `v2`, the client sidecar ejects the `v2` endpoint, and all following requests return `200`.
+
+Check the endpoints of `failover-service` in the client sidecar. The `OUTLIER CHECK` column shows `FAILED` for the ejected `v2` endpoint (compare the IP address with the output of Step 1) and `OK` for `v1`:
+
+[source,bash]
+----
+POD_NAME=$(oc get pod \
+  -n $NAMESPACE \
+  -l app=curl-client \
+  -o jsonpath='{.items[0].metadata.name}')
+
+istioctl proxy-config endpoint $POD_NAME \
+  -n $NAMESPACE \
+  --cluster \
+  "outbound|80||failover-service.$NAMESPACE.svc.cluster.local"
+----
+
+Without `istioctl`, read the same information from the Envoy admin interface of the sidecar. The ejected endpoint has the health flag `/failed_outlier_check`:
+
+[source,bash]
+----
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c istio-proxy -- \
+  pilot-agent request GET clusters |
+  grep "outbound|80||failover-service" |
+  grep health_flags
+----
+
+NOTE: The ejection ends after `baseEjectionTime` (60 seconds), and the endpoint returns to the load balancing pool; Envoy checks this every `interval` (10 seconds). If you repeat the requests after that, `v2` again returns three `503` responses before it is ejected once more, possibly for longer: Envoy multiplies `baseEjectionTime` by the number of times that an endpoint has recently been ejected.
+
+=== Step 5: Fail Over with Retries
+
+Outlier detection only reacts after an endpoint has failed several times. Retries on a different endpoint hide these failures from the client. Replace the VirtualService with one that retries `5xx` responses:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: failover-service
+  namespace: ${NAMESPACE}
+spec:
+  hosts:
+  - failover-service
+  http:
+  - route:
+    - destination:
+        host: failover-service
+    retries:
+      attempts: 3
+      perTryTimeout: 2s
+      retryOn: 5xx
+EOF
+----
+
+Wait until the ejection of `v2` has ended (about two minutes), then send the requests again:
+
+[source,bash]
+----
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  sh -c \
+  'for i in $(seq 1 20); do curl -s -o /dev/null -w "%{http_code}\n" http://failover-service; done'
+----
+
+All requests return `200`. A request that reaches `v2` gets a `503`, and the client sidecar retries it on another endpoint, `v1`. The `503` responses still count for outlier detection, so `v2` is ejected again after three of them. Check it with the commands of Step 4.
+
+== Exercise 3: Implement Circuit Breaking
+
+In this exercise, you will configure circuit breaking to prevent cascading failures.
+
+=== Step 1: Deploy a Service for Circuit Breaking
+
+Deploy a service that we'll use to test circuit breaking:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: circuit-service
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: circuit
+  template:
+    metadata:
+      labels:
+        app: circuit
+    spec:
+      containers:
+      - name: nginx
+        image: quay.io/nginx/nginx-unprivileged:latest
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: circuit-service
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: circuit
+  ports:
+  - port: 80
+    targetPort: 8080
+EOF
+----
+
+=== Step 2: Create DestinationRule with Circuit Breaking
+
+Create a DestinationRule with circuit breaking configuration:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: circuit-service
+  namespace: ${NAMESPACE}
+spec:
+  host: circuit-service
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 2
+      http:
+        http1MaxPendingRequests: 2
+        http2MaxRequests: 2
+        maxRequestsPerConnection: 1
+    outlierDetection:
+      consecutive5xxErrors: 2
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 100
+EOF
+----
+
+=== Step 3: Verify Circuit Breaking Configuration
+
+Check the DestinationRule:
+
+[source,bash]
+----
+oc get destinationrule circuit-service \
+  -n $NAMESPACE \
+  -o yaml
+----
+
+=== Step 4: Test Circuit Breaking
+
+Deploy a client that will generate load to test circuit breaking:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: circuit-client
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: circuit-client
+  template:
+    metadata:
+      labels:
+        app: circuit-client
+    spec:
+      containers:
+      - name: curl
+        image: quay.io/curl/curl:latest
+        command: ["sleep", "3600"]
+EOF
+----
+
+Send multiple concurrent requests to trigger circuit breaking:
+
+[source,bash]
+----
+POD_NAME=$(oc get pod \
+  -n $NAMESPACE \
+  -l app=circuit-client \
+  -o jsonpath='{.items[0].metadata.name}')
+
+oc exec \
+  -n $NAMESPACE \
+  $POD_NAME -- \
+  sh -c \
+  'for i in $(seq 1 10); do curl -s http://circuit-service & done; wait'
+----
+
+Check the logs to see circuit breaking behavior:
+
+[source,bash]
+----
+oc logs \
+  -n $NAMESPACE \
+  -l app=circuit-client \
+  -c istio-proxy \
+  --tail=20
+
+oc logs \
+  -n $NAMESPACE \
+  -l app=circuit \
+  -c istio-proxy \
+  --tail=20
+----
+
+Some of the concurrent requests exceed the connection pool limits. The client sidecar rejects them immediately with `503` without sending them to `circuit-service`; in the client's access log these requests have the response flag `UO` (upstream overflow) and do not appear in the logs of `circuit-service`.
+
+== Exercise 4: Configure Request Authentication with JWT
+
+In this exercise, you will set up RequestAuthentication to validate JWT tokens.
+
+=== Step 1: Deploy a Test Application
+
+Deploy an application that will require authentication:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+      - name: nginx
+        image: quay.io/nginx/nginx-unprivileged:latest
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: auth-service
+  ports:
+  - port: 80
+    targetPort: 8080
+EOF
+----
+
+=== Step 2: Create a Simple JWT for Testing
+
+For this exercise, you use the sample JWT issuer `testing@secure.istio.io` from the Istio project. In production, you would use a proper authentication service. Create a RequestAuthentication policy. The `jwks` field contains the public key of the issuer (a JSON Web Key Set) inline, so the sidecars do not need to fetch it from a URL:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: security.istio.io/v1beta1
+kind: RequestAuthentication
+metadata:
+  name: jwt-auth
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    matchLabels:
+      app: auth-service
+  jwtRules:
+  - issuer: "testing@secure.istio.io"
+    jwks: '{"keys":[{"e":"AQAB","kid":"DHFbpoIUqrY8t2zpA2qXfCmr5VO5ZEr4RzHU_-envvQ","kty":"RSA","n":"xAE7eB6qugXyCAG3yhh7pkDkT65pHymX-P7KfIupjf59vsdo91bSP9C8H07pSAGQO1MV_xFj9VswgsCg4R6otmg5PV2He95lZdHtOcU5DXIg_pbhLdKXbi66GlVeK6ABZOUW3WYtnNHD-91gVuoeJT_DwtGGcp4ignkgXfkiEm4sw-4sfb4qdt5oLbyVpmW6x9cfa7vs2WTfURiCrBoUqgBo_-4WTiULmmHSGZHOjzwa8WtrtOQGsAFjIbno85jp6MnGGGZPYZbDAa_b3y5u-YpW7ypZrvD8BgtKVjgtQgZhLAGezMt0ua3DRrWnKqTZ0BJ_EyxOGuHJrLsn00fnMQ"}]}'
+EOF
+----
+
+NOTE: The key and the matching test token are Istio's samples `jwks.json` and `demo.jwt` from https://github.com/istio/istio/tree/release-{istio_version}/security/tools/jwt/samples[security/tools/jwt/samples^] in the Istio repository. In production, use your own JWT issuer, and usually a `jwksUri` that points to the JWKS endpoint of the issuer, so that rotated keys are picked up automatically.
+
+=== Step 3: Verify RequestAuthentication
+
+Check that the RequestAuthentication was created:
+
+[source,bash]
+----
+oc get requestauthentication -n $NAMESPACE
+oc get requestauthentication jwt-auth \
+  -n $NAMESPACE \
+  -o yaml
+----
+
+=== Step 4: Test Without JWT Token
+
+Try to access the service without a JWT token:
+
+[source,bash]
+----
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -v http://auth-service
+----
+
+The request should succeed because RequestAuthentication only validates tokens if they are present. To require tokens, you need AuthorizationPolicy (covered in the next exercise).
+
+=== Step 5: Test With Invalid JWT Token
+
+Test with an invalid token:
+
+[source,bash]
+----
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -v -H "Authorization: Bearer invalid-token" http://auth-service
+----
+
+=== Step 6: Test With Valid JWT Token
+
+Set `TOKEN` to Istio's sample token `demo.jwt`. It is signed with the key from the RequestAuthentication, and both its issuer (`iss`) and subject (`sub`) are `testing@secure.istio.io`:
+
+[source,bash,subs="attributes+"]
+----
+TOKEN={demo_jwt}
+echo $TOKEN
+----
+
+Test with a valid token:
+
+[source,bash]
+----
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -v -H "Authorization: Bearer $TOKEN" http://auth-service
+----
+
+== Exercise 5: Create Authorization Policies
+
+In this exercise, you will create AuthorizationPolicies to control access to your services.
+
+=== Step 1: Create an AuthorizationPolicy to Require Authentication
+
+Create an AuthorizationPolicy that requires a valid JWT token:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: require-jwt
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    matchLabels:
+      app: auth-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        requestPrincipals: ["*"]
+EOF
+----
+
+This policy allows requests from any authenticated principal (any valid JWT).
+
+=== Step 2: Test Authorization Policy
+
+Try accessing without a token (should be denied):
+
+[source,bash]
+----
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -v http://auth-service
+----
+
+NOTE: The sidecar of `curl-client` reuses its connections to `auth-service`, and a request on a connection that was opened before a policy change can still be evaluated with the previous policy. If the first request after a change (up to one per `auth-service` pod) does not show the expected result, run the command again. This applies to every policy change in this module.
+
+Try with a valid token (should be allowed):
+
+[source,bash,subs="attributes+"]
+----
+TOKEN={demo_jwt}
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -v -H "Authorization: Bearer $TOKEN" http://auth-service
+----
+
+=== Step 3: Create Method-Based Authorization
+
+ALLOW policies are combined with OR: a request is allowed if it matches any ALLOW policy that applies to the workload. As long as `require-jwt` exists, it allows every authenticated request, whatever its method. Replace it with an AuthorizationPolicy that only allows GET and POST methods:
+
+[source,bash]
+----
+oc delete authorizationpolicy require-jwt -n $NAMESPACE
+oc apply -f - <<EOF
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-methods
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    matchLabels:
+      app: auth-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        requestPrincipals: ["*"]
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+EOF
+----
+
+=== Step 4: Test Method-Based Authorization
+
+Test with GET (should work):
+
+[source,bash,subs="attributes+"]
+----
+TOKEN={demo_jwt}
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -v -X GET -H "Authorization: Bearer $TOKEN" http://auth-service
+----
+
+Test with DELETE (should be denied with `403` and `RBAC: access denied`):
+
+[source,bash]
+----
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -v \
+    -X DELETE \
+    -H "Authorization: Bearer $TOKEN" \
+    http://auth-service
+----
+
+NOTE: A `405 Not Allowed` page comes from nginx, not from the mesh: it means that the authorization policies let the request through.
+
+=== Step 5: Create Path-Based Authorization
+
+Replace the method-based policy with an AuthorizationPolicy that restricts access to specific paths. If both ALLOW policies existed, `allow-methods` would still allow GET and POST requests to every path:
+
+[source,bash]
+----
+oc delete authorizationpolicy allow-methods -n $NAMESPACE
+oc apply -f - <<EOF
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-paths
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    matchLabels:
+      app: auth-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        requestPrincipals: ["*"]
+    to:
+    - operation:
+        paths: ["/api/*", "/public/*"]
+EOF
+----
+
+=== Step 6: Create a Deny Policy
+
+Create an explicit deny policy for admin endpoints:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-admin
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    matchLabels:
+      app: auth-service
+  action: DENY
+  rules:
+  - to:
+    - operation:
+        paths: ["/admin/*"]
+EOF
+----
+
+`oc apply` may print a warning that the policy will deny all traffic to TCP ports in some cases because it uses HTTP-only attributes. The `auth-service` port is HTTP, so the warning does not apply here.
+
+Test the deny policy:
+
+[source,bash,subs="attributes+"]
+----
+TOKEN={demo_jwt}
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -v \
+    -H "Authorization: Bearer $TOKEN" \
+    http://auth-service/admin/test
+----
+
+=== Step 7: Verify All Authorization Policies
+
+List all AuthorizationPolicies:
+
+[source,bash]
+----
+oc get authorizationpolicy -n $NAMESPACE
+----
+
+View the configurations:
+
+[source,bash]
+----
+oc get authorizationpolicy \
+  -n $NAMESPACE \
+  -o yaml
+----
+
+== Exercise 6: Combine Authentication and Authorization
+
+In this exercise, you will combine RequestAuthentication and AuthorizationPolicy for complete security.
+
+=== Step 1: Deploy a New Service
+
+Deploy a service for the combined authentication and authorization exercise:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secure-service
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: secure-service
+  template:
+    metadata:
+      labels:
+        app: secure-service
+    spec:
+      containers:
+      - name: nginx
+        image: quay.io/nginx/nginx-unprivileged:latest
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: secure-service
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: secure-service
+  ports:
+  - port: 80
+    targetPort: 8080
+EOF
+----
+
+=== Step 2: Create RequestAuthentication
+
+Create a RequestAuthentication policy for the service:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: security.istio.io/v1beta1
+kind: RequestAuthentication
+metadata:
+  name: secure-jwt-auth
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    matchLabels:
+      app: secure-service
+  jwtRules:
+  - issuer: "testing@secure.istio.io"
+    jwks: '{"keys":[{"e":"AQAB","kid":"DHFbpoIUqrY8t2zpA2qXfCmr5VO5ZEr4RzHU_-envvQ","kty":"RSA","n":"xAE7eB6qugXyCAG3yhh7pkDkT65pHymX-P7KfIupjf59vsdo91bSP9C8H07pSAGQO1MV_xFj9VswgsCg4R6otmg5PV2He95lZdHtOcU5DXIg_pbhLdKXbi66GlVeK6ABZOUW3WYtnNHD-91gVuoeJT_DwtGGcp4ignkgXfkiEm4sw-4sfb4qdt5oLbyVpmW6x9cfa7vs2WTfURiCrBoUqgBo_-4WTiULmmHSGZHOjzwa8WtrtOQGsAFjIbno85jp6MnGGGZPYZbDAa_b3y5u-YpW7ypZrvD8BgtKVjgtQgZhLAGezMt0ua3DRrWnKqTZ0BJ_EyxOGuHJrLsn00fnMQ"}]}'
+EOF
+----
+
+=== Step 3: Create Comprehensive AuthorizationPolicy
+
+Create an AuthorizationPolicy that combines multiple rules:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: secure-policy
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    matchLabels:
+      app: secure-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        requestPrincipals: ["testing@secure.istio.io/*"]
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+        paths: ["/api/*"]
+  - from:
+    - source:
+        requestPrincipals: ["testing@secure.istio.io/*"]
+    to:
+    - operation:
+        methods: ["GET"]
+        paths: ["/public/*"]
+EOF
+----
+
+=== Step 4: Create Deny Policy for Admin
+
+Create a deny policy for admin endpoints:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-secure-admin
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    matchLabels:
+      app: secure-service
+  action: DENY
+  rules:
+  - to:
+    - operation:
+        paths: ["/admin/*"]
+EOF
+----
+
+=== Step 5: Test Complete Security Configuration
+
+Test without token (should be denied):
+
+[source,bash]
+----
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -v http://secure-service/api/test
+----
+
+Test with valid token on allowed path (should work):
+
+[source,bash,subs="attributes+"]
+----
+TOKEN={demo_jwt}
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -v \
+    -H "Authorization: Bearer $TOKEN" \
+    http://secure-service/api/test
+----
+
+NOTE: The demo application has no `/api/test` or `/public/test` page, so an allowed request returns `404 Not Found` from nginx. A request denied by the mesh returns `403` with `RBAC: access denied`.
+
+Test with valid token on denied path (should be denied):
+
+[source,bash]
+----
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -v \
+    -H "Authorization: Bearer $TOKEN" \
+    http://secure-service/admin/test
+----
+
+Test with valid token on public path (should work):
+
+[source,bash]
+----
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -v \
+    -H "Authorization: Bearer $TOKEN" \
+    http://secure-service/public/test
+----
+
+=== Step 6: Verify Complete Configuration
+
+View all security policies:
+
+[source,bash]
+----
+oc get requestauthentication,authorizationpolicy -n $NAMESPACE
+----
+
+View detailed configurations:
+
+[source,bash]
+----
+oc get requestauthentication secure-jwt-auth \
+  -n $NAMESPACE \
+  -o yaml
+
+oc get authorizationpolicy secure-policy \
+  -n $NAMESPACE \
+  -o yaml
+
+oc get authorizationpolicy deny-secure-admin \
+  -n $NAMESPACE \
+  -o yaml
+----
+
+== Summary
+
+In these exercises, you have:
+
+* Configured different load balancing algorithms (round-robin, least-connection, random) in DestinationRules
+* Implemented outlier detection and failover behavior
+* Configured circuit breaking to prevent cascading failures
+* Set up RequestAuthentication to validate JWT tokens
+* Created AuthorizationPolicies with various rules (method-based, path-based, deny policies)
+* Combined authentication and authorization for complete security
+
+These advanced features enable you to build resilient, secure microservices with fine-grained access control.
+
+== Troubleshooting
+
+If you encounter issues:
+
+* *Load balancing not working*: Verify the DestinationRule is applied and check that multiple endpoints are available
+* *Failover not triggering*: Check outlier detection settings and ensure an endpoint really returns `5xx` responses (faults injected by a VirtualService are not counted). Istio retries `503` responses by default, so set `retries.attempts: 0` to see the errors
+* *Circuit breaker not opening*: Verify connection pool limits are appropriate and that load is sufficient
+* *JWT authentication failing*: Verify that the token is signed with a key from the `jwks` (or `jwksUri`) of the RequestAuthentication, that its `iss` claim matches the `issuer`, and that the token format is correct
+* *Authorization denying valid requests*: Check the request principal matches the policy rules and verify policy order (DENY takes precedence)
+* *Policies not applying*: Verify selector labels match the workload labels and check namespace scope

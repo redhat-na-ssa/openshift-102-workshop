@@ -1,0 +1,45 @@
+= Prometheus Query Workshop
+
+This workshop is designed to help you become proficient with Prometheus Query Language (PromQL). You will learn how to write effective queries to extract meaningful insights from your metrics data, from basic selectors to advanced aggregation patterns.
+
+ifdef::openshift-102-showroom[]
+include::openshift-102:ROOT:partial$cli-tools-container.adoc[]
+endif::[]
+
+== Workshop Structure
+
+This workshop consists of six modules:
+
+* *Module 1: Prometheus Query Language Fundamentals* - Learn the basics of PromQL, including metric names, labels, data types, and basic query syntax
+* *Module 2: Selectors and Filtering* - Master label selectors, regular expressions, and filtering techniques (includes exercises)
+* *Module 3: Aggregation Functions* - Understand how to use aggregation functions like sum, average, quantiles, and top-k (includes exercises)
+* *Module 4: Advanced Query Patterns* - Explore rate functions, subqueries, logical operators, and optimization techniques (includes exercises)
+* *Module 5: Alerting Rules* - Collect the metrics of your own application with user workload monitoring, write recording rules and alerting rules, and view and silence alerts (includes exercises)
+* *Module 6: Grafana Dashboards* - Run Grafana in your project with the Grafana Operator, connect it to the metrics of your project, and build a dashboard from your queries (includes exercises)
+
+== Prerequisites
+
+This workshop assumes the following:
+
+* Basic understanding of Prometheus concepts (metrics, labels, time series)
+* Access to an OpenShift 4.16 or later cluster with Prometheus installed
+* Ability to access the Prometheus web UI or use the Prometheus API
+* Familiarity with basic command-line operations
+
+A cluster administrator prepares the cluster before the workshop. All cluster components, roles, tools and images are listed in xref:setup-requirements.adoc[Setup Requirements]; in short:
+
+* Modules 1 to 4: each workshop user has the read-only `cluster-monitoring-view` cluster role
+* Module 5: user workload monitoring is enabled, and each workshop user has the `monitoring-edit` role in their project
+* Module 6: the community Grafana Operator (version 5) is installed for all namespaces
+
+If you are new to Prometheus, we recommend reviewing the https://prometheus.io/docs/introduction/overview/[Prometheus documentation] before proceeding.
+
+== Expectations
+
+After completing this workshop, you will be able to:
+
+* Write basic PromQL queries using selectors and filters
+* Apply aggregation functions to summarize metrics across multiple time series
+* Construct advanced queries using rate functions, subqueries, and logical operators
+* Debug and optimize Prometheus queries for better performance
+* Use PromQL effectively in Grafana dashboards and alerting rules

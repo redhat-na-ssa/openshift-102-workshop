@@ -1,0 +1,536 @@
+= Module 3: Advanced Traffic Management and Security
+:hardbreaks-option:
+
+This module explores advanced features of DestinationRules and Istio's security capabilities. You will learn about load balancing, failover, and circuit breaking in DestinationRules, as well as how to implement request authentication and authorization policies to secure your services.
+
+== DestinationRules: Beyond the Basics
+
+You've already encountered DestinationRules in previous modules. Let's review what we've covered and then explore additional powerful features.
+
+=== What We've Already Seen
+
+In Module 1, you learned that DestinationRules can configure mTLS settings. In Module 2, you used DestinationRules to define service subsets for traffic splitting. These are fundamental uses of DestinationRules:
+
+* *mTLS Configuration*: Setting TLS mode (e.g., `ISTIO_MUTUAL`) for secure service-to-service communication
+* *Subsets*: Defining service versions or variants using labels for routing purposes
+
+DestinationRules are versatile resources that define *how* traffic should be handled when it reaches a destination service. They complement VirtualServices, which define *where* traffic should go.
+
+=== Load Balancing
+
+One of the most important features of DestinationRules is configuring load balancing algorithms. By default, Istio uses least-request load balancing, but you can configure various algorithms to suit your needs.
+
+==== Load Balancing Algorithms
+
+Istio supports several load balancing algorithms:
+
+* *ROUND_ROBIN*: Distributes requests evenly across all endpoints
+* *LEAST_REQUEST*: Routes to the endpoint with the fewest outstanding requests (default)
+* *LEAST_CONN*: Deprecated alias of `LEAST_REQUEST`
+* *RANDOM*: Randomly selects an endpoint
+* *PASSTHROUGH*: Passes requests directly to the original destination without load balancing
+
+==== Configuring Load Balancing
+
+Here's an example of configuring load balancing in a DestinationRule:
+
+[source,yaml]
+----
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: my-service
+spec:
+  host: my-service
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_CONN
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+    trafficPolicy:
+      loadBalancer:
+        simple: ROUND_ROBIN
+  - name: v2
+    labels:
+      version: v2
+    trafficPolicy:
+      loadBalancer:
+        simple: RANDOM
+----
+
+This example shows:
+
+* Global load balancing policy at the DestinationRule level
+* Subset-specific load balancing policies that override the global policy
+
+==== Locality-Aware Load Balancing
+
+Istio also supports locality-aware load balancing, which prioritizes endpoints in the same zone or region:
+
+[source,yaml]
+----
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: my-service
+spec:
+  host: my-service
+  trafficPolicy:
+    loadBalancer:
+      localityLbSetting:
+        enabled: true
+        distribute:
+        - from: "region1/zone1/*"
+          to:
+            "region1/zone1/*": 80
+            "region1/zone2/*": 20
+----
+
+This configuration ensures that traffic prefers local endpoints while allowing failover to other zones when needed.
+
+=== Failover
+
+DestinationRules enable you to configure failover behavior, so that traffic is redirected automatically from failing endpoints to healthy ones.
+
+==== Outlier Detection
+
+Failover relies on outlier detection, which identifies unhealthy endpoints and removes them from the load balancing pool. Configure outlier detection like this:
+
+[source,yaml]
+----
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: my-service
+spec:
+  host: my-service
+  trafficPolicy:
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 50
+----
+
+Key parameters:
+
+* *consecutive5xxErrors*: Number of consecutive 5xx errors before ejecting an endpoint
+* *interval*: Time between ejection analysis sweeps, in which ejected endpoints are also checked for return to the pool
+* *baseEjectionTime*: Minimum time an endpoint is ejected
+* *maxEjectionPercent*: Maximum percentage of endpoints that can be ejected
+* *minHealthPercent*: Minimum percentage of healthy endpoints required
+
+==== Failover Configuration
+
+Subsets inherit the outlier detection settings of the DestinationRule, and a subset can override them with its own traffic policy:
+
+[source,yaml]
+----
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: my-service
+spec:
+  host: my-service
+  trafficPolicy:
+    outlierDetection:
+      consecutive5xxErrors: 3
+      interval: 30s
+  subsets:
+  - name: primary
+    labels:
+      version: v1
+  - name: backup
+    labels:
+      version: v2
+    trafficPolicy:
+      outlierDetection:
+        consecutive5xxErrors: 5
+----
+
+Outlier detection works within the endpoints of one destination: while an endpoint is ejected, requests go to the remaining healthy endpoints of the same service or subset. A VirtualService does not switch to another subset when one fails. Combine outlier detection with retries, which Istio sends to a different endpoint, so that clients do not see the errors that occur before an endpoint is ejected. To fail over to endpoints in other localities or clusters, use the `localityLbSetting` of the DestinationRule's load balancer settings.
+
+=== Circuit Breaking
+
+Circuit breaking is a critical resilience pattern that prevents cascading failures by stopping requests to unhealthy services.
+
+==== What is Circuit Breaking?
+
+A circuit breaker limits the load that clients send to a service and stops sending requests to instances that fail. This prevents overwhelming a failing service and allows it to recover. In Istio, the client-side Envoy sidecar enforces circuit breaking with two mechanisms that you configure in a DestinationRule: connection pool limits and outlier detection.
+
+==== Circuit Breaker Configuration
+
+Configure circuit breaking in DestinationRules:
+
+[source,yaml]
+----
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: my-service
+spec:
+  host: my-service
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 10
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 2
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+----
+
+Connection pool settings:
+
+* *maxConnections*: Maximum number of TCP connections
+* *http1MaxPendingRequests*: Maximum pending HTTP/1.1 requests
+* *http2MaxRequests*: Maximum concurrent HTTP/2 requests
+* *maxRequestsPerConnection*: Maximum requests per connection
+
+==== How Envoy Breaks the Circuit
+
+Envoy does not implement the classic circuit breaker state machine with _closed_, _open_ and _half-open_ states. Instead, the two mechanisms act independently:
+
+* *Connection pool limits (overflow)*: Envoy checks the limits for every request. While the connections, the queue of pending requests or the active requests to the service have reached their limit, the client sidecar rejects additional requests immediately with `503 Service Unavailable`. The access log shows these requests with the response flag `UO` (upstream overflow). As soon as the number drops below the limit, new requests are sent again; there is no timer and no test phase.
+* *Outlier detection (ejection)*: An endpoint that returns `consecutive5xxErrors` errors in a row is ejected from the load balancing pool and receives no requests. After `baseEjectionTime`, multiplied by the number of times the endpoint has been ejected, Envoy returns it to the pool, and it receives its full share of traffic again. If it keeps failing, it is ejected again for a longer time. `maxEjectionPercent` limits how many endpoints can be ejected at the same time.
+
+== Request Authentication
+
+Istio provides powerful authentication mechanisms to verify the identity of clients making requests to your services.
+
+=== What is Request Authentication?
+
+Request Authentication (RequestAuthentication) verifies JSON Web Tokens (JWTs) attached to requests. It validates that requests come from trusted sources and extracts identity information from tokens.
+
+Request Authentication is different from PeerAuthentication:
+
+* *PeerAuthentication*: Verifies service-to-service communication (mTLS)
+* *RequestAuthentication*: Verifies end-user identity (JWT tokens)
+
+=== RequestAuthentication Resource
+
+Create a RequestAuthentication resource to validate JWTs:
+
+[source,yaml]
+----
+apiVersion: security.istio.io/v1beta1
+kind: RequestAuthentication
+metadata:
+  name: jwt-auth
+  namespace: my-namespace
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  jwtRules:
+  - issuer: "https://auth.example.com"
+    jwksUri: "https://auth.example.com/.well-known/jwks.json"
+----
+
+Key components:
+
+* *selector*: Specifies which workloads this policy applies to
+* *jwtRules*: Defines JWT validation rules
+* *issuer*: The JWT issuer that must match the token
+* *jwksUri*: URI to fetch JSON Web Key Set for token validation
+
+=== JWT Validation
+
+RequestAuthentication validates:
+
+* Token signature using keys from the JWKS endpoint
+* Token expiration (exp claim)
+* Token issuer (iss claim)
+* Token audience (aud claim), if specified
+
+If validation fails, the request is rejected with a 401 Unauthorized response.
+
+=== Multiple JWT Providers
+
+You can configure multiple JWT providers for different authentication sources:
+
+[source,yaml]
+----
+apiVersion: security.istio.io/v1beta1
+kind: RequestAuthentication
+metadata:
+  name: multi-jwt-auth
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  jwtRules:
+  - issuer: "https://auth1.example.com"
+    jwksUri: "https://auth1.example.com/.well-known/jwks.json"
+  - issuer: "https://auth2.example.com"
+    jwksUri: "https://auth2.example.com/.well-known/jwks.json"
+----
+
+Istio will accept tokens from any of the configured issuers.
+
+=== RequestAuthentication Best Practices
+
+When implementing RequestAuthentication:
+
+* Use HTTPS for JWKS endpoints to prevent man-in-the-middle attacks
+* Configure appropriate token expiration times
+* Use specific selectors to limit the scope of authentication policies
+* Monitor authentication failures to detect potential attacks
+* Combine with AuthorizationPolicy for complete access control
+
+== Authorization
+
+While RequestAuthentication verifies *who* is making a request, AuthorizationPolicy controls *what* they can do.
+
+=== What is Authorization?
+
+Authorization determines whether an authenticated user or service is allowed to perform a specific action. Istio's AuthorizationPolicy provides fine-grained access control based on various request attributes.
+
+=== AuthorizationPolicy Resource
+
+Create an AuthorizationPolicy to control access:
+
+[source,yaml]
+----
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-specific-users
+  namespace: my-namespace
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        requestPrincipals: ["https://auth.example.com/*"]
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+        paths: ["/api/*"]
+----
+
+Key components:
+
+* *selector*: Specifies which workloads this policy applies to
+* *action*: `ALLOW` or `DENY` (default is `ALLOW`)
+* *rules*: Defines the conditions for the policy
+
+=== Authorization Actions
+
+AuthorizationPolicy supports four actions:
+
+* *ALLOW*: Explicitly allows matching requests
+* *DENY*: Explicitly denies matching requests
+* *AUDIT*: Logs matching requests without allowing or denying (for monitoring)
+* *CUSTOM*: Delegates the access decision to an external authorization provider
+
+=== Authorization Rules
+
+Authorization rules can match on various request attributes:
+
+==== Source-Based Rules
+
+Match requests based on their source:
+
+[source,yaml]
+----
+rules:
+- from:
+  - source:
+      principals: ["cluster.local/ns/default/sa/my-service"]
+      namespaces: ["default"]
+      requestPrincipals: ["https://auth.example.com/user123"]
+----
+
+* *principals*: Service account identities (from mTLS)
+* *namespaces*: Source namespaces
+* *requestPrincipals*: End-user identities (from JWT)
+
+==== Operation-Based Rules
+
+Match requests based on the operation:
+
+[source,yaml]
+----
+rules:
+- to:
+  - operation:
+      methods: ["GET", "POST"]
+      paths: ["/api/*"]
+      hosts: ["api.example.com"]
+----
+
+* *methods*: HTTP methods (GET, POST, PUT, DELETE, etc.)
+* *paths*: URI paths (supports exact, prefix, suffix, and presence matching)
+* *hosts*: Host headers
+
+==== Custom Attribute Rules
+
+Match requests based on custom attributes:
+
+[source,yaml]
+----
+rules:
+- when:
+  - key: request.headers[user-agent]
+    values: ["Mozilla/*"]
+  - key: source.ip
+    values: ["192.168.1.0/24"]
+----
+
+=== Deny Rules
+
+Create explicit deny rules to block specific requests:
+
+[source,yaml]
+----
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-admin
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  action: DENY
+  rules:
+  - to:
+    - operation:
+        paths: ["/admin/*"]
+----
+
+This policy denies all requests to `/admin/*` paths.
+
+=== Combining Multiple Policies
+
+You can create multiple AuthorizationPolicies for different scenarios:
+
+[source,yaml]
+----
+# Policy 1: Allow authenticated users to access API
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-api
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        requestPrincipals: ["*"]
+    to:
+    - operation:
+        paths: ["/api/*"]
+
+---
+# Policy 2: Deny access to admin endpoints
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-admin
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  action: DENY
+  rules:
+  - to:
+    - operation:
+        paths: ["/admin/*"]
+----
+
+Istio evaluates CUSTOM policies first, then DENY policies, then ALLOW policies. A request that matches any DENY policy is rejected. If at least one ALLOW policy applies to the workload, the request must match one of them: ALLOW policies are combined with OR, so adding an ALLOW policy can only allow more requests.
+
+=== Authorization Best Practices
+
+When implementing authorization:
+
+* Follow the principle of least privilege
+* Use specific selectors to limit policy scope
+* Combine RequestAuthentication with AuthorizationPolicy for complete security
+* Test authorization policies thoroughly before deploying to production
+* Monitor authorization denials to detect potential security issues
+* Document policies clearly for team understanding
+* Use namespaces to isolate authorization policies when appropriate
+
+== Combining Authentication and Authorization
+
+For complete security, combine RequestAuthentication and AuthorizationPolicy:
+
+1. *RequestAuthentication*: Verifies the identity of the requester (via JWT)
+2. *AuthorizationPolicy*: Controls what the authenticated requester can do
+
+Example workflow:
+
+[source,yaml]
+----
+# Step 1: Require JWT authentication
+apiVersion: security.istio.io/v1beta1
+kind: RequestAuthentication
+metadata:
+  name: require-jwt
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  jwtRules:
+  - issuer: "https://auth.example.com"
+    jwksUri: "https://auth.example.com/.well-known/jwks.json"
+
+---
+# Step 2: Authorize based on identity
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: require-auth
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        requestPrincipals: ["https://auth.example.com/*"]
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+----
+
+This configuration:
+
+* Requires valid JWTs from the specified issuer
+* Only allows GET and POST requests from authenticated users
+* Rejects all other requests
+
+== Summary
+
+In this module, you have learned:
+
+* DestinationRules provide advanced traffic management beyond mTLS and subsets
+* Load balancing can be configured with various algorithms (round-robin, least-conn, random)
+* Failover and outlier detection help maintain service availability
+* Circuit breaking prevents cascading failures by limiting connections and requests
+* RequestAuthentication validates JWT tokens to verify user identity
+* AuthorizationPolicy provides fine-grained access control based on various attributes
+* Authentication and authorization work together to provide complete security
+
+These advanced features enable you to build resilient, secure microservices architectures with Istio.
+
+== Next Steps
+
+In the next module, you will explore observability features that help you monitor, trace, and understand the behavior of your service mesh.

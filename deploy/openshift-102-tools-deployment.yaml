@@ -28,7 +28,7 @@ spec:
       containers:
         - name: tools
           # Replace with your mirror or pinned tag (e.g. ghcr.io/<org>/openshift-102-tools:v1.0.5)
-          image: ghcr.io/shpwrck/openshift-102-tools:latest
+          image: ghcr.io/redhat-na-ssa/openshift-102-tools:latest
           imagePullPolicy: IfNotPresent
           resources:
             requests:

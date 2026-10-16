@@ -1,0 +1,804 @@
+= Module 4: Exercises
+:hardbreaks-option:
+
+This exercise section provides hands-on practice with accessing metrics and logs directly from Envoy sidecar proxies. You will learn how to query Envoy metrics, view access logs, and use built-in Istio tools to explore observability data without installing external tools.
+
+== Prerequisites
+
+Before starting these exercises, ensure you have:
+
+* Access to an OpenShift cluster with OpenShift Service Mesh {ossm_version} (Istio {istio_version}) installed
+* Your namespace (`$NAMESPACE`) configured with sidecar injection enabled
+* The `oc` CLI tool installed and configured, and `istioctl` {istio_version} for Exercise 5 (see xref:setup-requirements.adoc[Setup Requirements])
+* Services deployed in your namespace (from previous modules)
+
+== Exercise 1: Access Envoy Metrics
+
+In this exercise, you will learn how to access Prometheus-formatted metrics directly from Envoy sidecar proxies.
+
+=== Step 1: Set Your Namespace
+
+Ensure your namespace variable is set:
+
+[source,bash,subs="attributes+"]
+----
+export NAMESPACE={user}-sandbox
+----
+
+The exercises send test requests with `oc exec` from the `curl-client` Deployment that you created in Module 1 (Exercise 1, Step 7). Check that it is running:
+
+[source,bash]
+----
+oc get deployment curl-client -n $NAMESPACE
+----
+
+=== Step 2: Deploy a Test Service
+
+Deploy a simple service to generate metrics:
+
+[source,bash]
+----
+oc apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metrics-test
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: metrics-test
+  template:
+    metadata:
+      labels:
+        app: metrics-test
+    spec:
+      containers:
+      - name: nginx
+        image: quay.io/nginx/nginx-unprivileged:latest
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: metrics-test
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: metrics-test
+  ports:
+  - port: 80
+    targetPort: 8080
+EOF
+----
+
+Wait for pods to be ready:
+
+[source,bash]
+----
+oc get pods \
+  -n $NAMESPACE \
+  -l app=metrics-test
+----
+
+=== Step 3: Generate Some Traffic
+
+Generate traffic to create metrics:
+
+[source,bash]
+----
+for i in {1..20}; do
+  oc exec \
+    -n $NAMESPACE \
+    deploy/curl-client \
+    -c curl -- \
+    curl -s http://metrics-test > /dev/null
+done
+----
+
+=== Step 4: Access Envoy Metrics Endpoint
+
+Envoy sidecars expose metrics on port 15020. Port-forward to access the metrics endpoint:
+
+[source,bash]
+----
+POD_NAME=$(oc get pod \
+  -n $NAMESPACE \
+  -l app=metrics-test \
+  -o jsonpath='{.items[0].metadata.name}')
+
+oc port-forward -n $NAMESPACE $POD_NAME 15020:15020 &
+----
+
+Access the metrics endpoint:
+
+[source,bash]
+----
+curl http://localhost:15020/stats/prometheus
+----
+
+You should see Prometheus-formatted metrics. Look for metrics like:
+
+* `istio_requests_total`
+* `istio_request_duration_milliseconds`
+* `istio_request_bytes`
+* `istio_response_bytes`
+
+=== Step 5: Query Specific Metrics
+
+Query for specific metrics using grep:
+
+[source,bash]
+----
+curl -s http://localhost:15020/stats/prometheus |
+  grep istio_requests_total
+----
+
+Query for request duration metrics:
+
+[source,bash]
+----
+curl -s http://localhost:15020/stats/prometheus |
+  grep istio_request_duration
+----
+
+=== Step 6: View All Envoy Stats
+
+View all Envoy statistics (not just Prometheus format). Port 15020 serves only `/stats/prometheus` and health endpoints (`/stats` returns `404`); the plain statistics come from the Envoy admin interface on port 15000, which you can query through `pilot-agent` inside the sidecar:
+
+[source,bash]
+----
+oc exec \
+  -n $NAMESPACE \
+  $POD_NAME \
+  -c istio-proxy -- \
+  pilot-agent request GET stats
+----
+
+This shows all available Envoy statistics in a different format.
+
+=== Step 7: Stop Port-Forwarding
+
+Stop the port-forward:
+
+[source,bash]
+----
+pkill -f "port-forward.*15020"
+----
+
+== Exercise 2: Query Metrics from Multiple Pods
+
+In this exercise, you will query metrics from multiple Envoy sidecars and compare them.
+
+=== Step 1: Get All Pod Names
+
+Get the names of all pods for the service:
+
+[source,bash]
+----
+oc get pods \
+  -n $NAMESPACE \
+  -l app=metrics-test \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
+----
+
+=== Step 2: Query Metrics from Each Pod
+
+Query metrics from the first pod:
+
+[source,bash]
+----
+POD1=$(oc get pod \
+  -n $NAMESPACE \
+  -l app=metrics-test \
+  -o jsonpath='{.items[0].metadata.name}')
+
+oc exec \
+  -n $NAMESPACE \
+  $POD1 \
+  -c istio-proxy -- \
+  pilot-agent request GET stats/prometheus |
+  grep istio_requests_total |
+  head -5
+----
+
+Query metrics from the second pod:
+
+[source,bash]
+----
+POD2=$(oc get pod \
+  -n $NAMESPACE \
+  -l app=metrics-test \
+  -o jsonpath='{.items[1].metadata.name}')
+
+oc exec \
+  -n $NAMESPACE \
+  $POD2 \
+  -c istio-proxy -- \
+  pilot-agent request GET stats/prometheus |
+  grep istio_requests_total |
+  head -5
+----
+
+Compare the request counts between pods to see load distribution.
+
+=== Step 3: Aggregate Metrics Across Pods
+
+Get total request count across all pods:
+
+[source,bash]
+----
+for pod in $(oc get pods \
+    -n $NAMESPACE \
+    -l app=metrics-test \
+    -o jsonpath='{.items[*].metadata.name}'); do
+  echo "Pod: $pod"
+  oc exec \
+    -n $NAMESPACE \
+    $pod \
+    -c istio-proxy -- \
+    pilot-agent request GET stats/prometheus |
+    grep "istio_requests_total.*destination_service_name=\"metrics-test\"" |
+    head -3
+done
+----
+
+== Exercise 3: View Envoy Access Logs
+
+In this exercise, you will view and analyze Envoy access logs directly from the sidecar containers.
+
+Envoy writes access logs only when access logging is enabled. You enabled it for your namespace in Module 1 (Exercise 2, Step 6). Check that the Telemetry resource exists:
+
+[source,bash]
+----
+oc get telemetry -n $NAMESPACE
+----
+
+If the list is empty, create the `access-logs` Telemetry resource as shown in Module 1 before you continue.
+
+=== Step 1: Generate Traffic with Different Patterns
+
+Generate various types of traffic to create interesting logs:
+
+[source,bash]
+----
+# Successful requests
+for i in {1..5}; do
+  oc exec \
+    -n $NAMESPACE \
+    deploy/curl-client \
+    -c curl -- \
+    curl -s http://metrics-test > /dev/null
+done
+
+# Requests with different methods
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -s -X POST http://metrics-test > /dev/null
+
+# Requests with headers
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -s \
+    -H "X-Test-Header: test-value" \
+    http://metrics-test > /dev/null
+----
+
+=== Step 2: View Access Logs
+
+View the most recent access logs from a pod:
+
+[source,bash]
+----
+POD_NAME=$(oc get pod \
+  -n $NAMESPACE \
+  -l app=metrics-test \
+  -o jsonpath='{.items[0].metadata.name}')
+
+oc logs \
+  -n $NAMESPACE \
+  $POD_NAME \
+  -c istio-proxy \
+  --tail=20
+----
+
+The logs show detailed information about each request, including:
+
+* Request method and path
+* Response code
+* Request and response sizes
+* Duration
+* Upstream service information
+
+=== Step 3: Filter Logs by Response Code
+
+View only successful requests (2xx status codes):
+
+[source,bash]
+----
+oc logs \
+  -n $NAMESPACE \
+  $POD_NAME \
+  -c istio-proxy \
+  --tail=50 |
+  grep "\" 200 "
+----
+
+View only error responses:
+
+[source,bash]
+----
+oc logs \
+  -n $NAMESPACE \
+  $POD_NAME \
+  -c istio-proxy \
+  --tail=50 |
+  grep -E "\" [45][0-9]{2} "
+----
+
+=== Step 4: View Logs with Timestamps
+
+View logs with timestamps to see request timing:
+
+[source,bash]
+----
+oc logs \
+  -n $NAMESPACE \
+  $POD_NAME \
+  -c istio-proxy \
+  --tail=20 \
+  --timestamps
+----
+
+=== Step 5: Follow Logs in Real-Time
+
+Follow logs in real-time while generating traffic:
+
+[source,bash]
+----
+oc logs \
+  -n $NAMESPACE \
+  $POD_NAME \
+  -c istio-proxy \
+  -f &
+LOG_PID=$!
+
+# Generate some traffic
+for i in {1..3}; do
+  oc exec \
+    -n $NAMESPACE \
+    deploy/curl-client \
+    -c curl -- \
+    curl -s http://metrics-test > /dev/null
+  sleep 1
+done
+
+# Stop following logs
+kill $LOG_PID
+----
+
+=== Step 6: View Logs from Multiple Pods
+
+Compare logs from different pods:
+
+[source,bash]
+----
+for pod in $(oc get pods \
+    -n $NAMESPACE \
+    -l app=metrics-test \
+    -o jsonpath='{.items[*].metadata.name}'); do
+  echo "=== Logs from $pod ==="
+  oc logs \
+    -n $NAMESPACE \
+    $pod \
+    -c istio-proxy \
+    --tail=5
+  echo ""
+done
+----
+
+== Exercise 4: Analyze Request Patterns from Logs
+
+In this exercise, you will analyze access logs to understand request patterns and service behavior.
+
+=== Step 1: Generate Diverse Traffic
+
+Generate traffic with different characteristics:
+
+[source,bash]
+----
+# Fast requests
+for i in {1..10}; do
+  oc exec \
+    -n $NAMESPACE \
+    deploy/curl-client \
+    -c curl -- \
+    curl -s http://metrics-test > /dev/null
+done
+
+# Slow request (simulate with timeout)
+oc exec \
+  -n $NAMESPACE \
+  deploy/curl-client \
+  -c curl -- \
+  curl -s --max-time 5 http://metrics-test > /dev/null
+----
+
+=== Step 2: Extract Request Durations
+
+Istio's default access log format is plain text, not `key=value` pairs. An entry looks like this:
+
+----
+[2026-10-07T12:01:41.043Z] "GET / HTTP/1.1" 200 - via_upstream - "-" 0 896 1 0 "-" "curl/8.22.0" ...
+----
+
+When a line is split at the double quotes (`awk -F'"'`), field 2 is the request (`GET / HTTP/1.1`), field 3 starts with the response code, and field 5 holds the bytes received, the bytes sent, the duration in milliseconds and the upstream service time. Access log entries are the lines that start with `[`.
+
+Extract and analyze request durations (in milliseconds) from logs:
+
+[source,bash]
+----
+POD_NAME=$(oc get pod \
+  -n $NAMESPACE \
+  -l app=metrics-test \
+  -o jsonpath='{.items[0].metadata.name}')
+
+oc logs \
+  -n $NAMESPACE \
+  $POD_NAME \
+  -c istio-proxy \
+  --tail=50 |
+  awk -F'"' '/^\[/ {split($5, f, " "); print f[3]}' |
+  head -20
+----
+
+=== Step 3: Count Requests by Response Code
+
+Count requests by HTTP response code:
+
+[source,bash]
+----
+oc logs \
+  -n $NAMESPACE \
+  $POD_NAME \
+  -c istio-proxy \
+  --tail=100 |
+  awk -F'"' '/^\[/ {split($3, f, " "); print f[1]}' |
+  sort |
+  uniq -c
+----
+
+=== Step 4: Find Longest Requests
+
+Find the requests with the longest duration:
+
+[source,bash]
+----
+oc logs \
+  -n $NAMESPACE \
+  $POD_NAME \
+  -c istio-proxy \
+  --tail=100 |
+  awk -F'"' '/^\[/ {split($5, f, " "); print f[3] " ms  " $2}' |
+  sort -rn |
+  head -5
+----
+
+=== Step 5: Analyze Request Sizes
+
+Extract request sizes (bytes received) and response sizes (bytes sent):
+
+[source,bash]
+----
+oc logs \
+  -n $NAMESPACE \
+  $POD_NAME \
+  -c istio-proxy \
+  --tail=50 |
+  awk -F'"' '/^\[/ {split($5, f, " "); print f[1]}' |
+  head -20
+
+oc logs \
+  -n $NAMESPACE \
+  $POD_NAME \
+  -c istio-proxy \
+  --tail=50 |
+  awk -F'"' '/^\[/ {split($5, f, " "); print f[2]}' |
+  head -20
+----
+
+== Exercise 5: Use istioctl for Observability
+
+In this exercise, you will use `istioctl` commands to view proxy configuration and statistics.
+
+=== Step 1: View Proxy Configuration
+
+View the Envoy proxy configuration for a pod:
+
+[source,bash]
+----
+POD_NAME=$(oc get pod \
+  -n $NAMESPACE \
+  -l app=metrics-test \
+  -o jsonpath='{.items[0].metadata.name}')
+
+istioctl proxy-config all $POD_NAME -n $NAMESPACE | head -50
+----
+
+=== Step 2: View Proxy Stats
+
+View Envoy proxy statistics using istioctl:
+
+[source,bash]
+----
+istioctl experimental envoy-stats $POD_NAME -n $NAMESPACE
+----
+
+This prints the proxy's full statistics dump, a few hundred lines; the next step filters it.
+
+=== Step 3: View Specific Proxy Stats
+
+View specific statistics, such as request counts:
+
+[source,bash]
+----
+istioctl experimental envoy-stats $POD_NAME -n $NAMESPACE |
+  grep -i request
+----
+
+View connection statistics:
+
+[source,bash]
+----
+istioctl experimental envoy-stats $POD_NAME -n $NAMESPACE |
+  grep -i connection
+----
+
+=== Step 4: View Cluster Information
+
+View cluster (upstream service) information:
+
+[source,bash]
+----
+istioctl proxy-config cluster $POD_NAME -n $NAMESPACE
+----
+
+This shows all the upstream services this pod can connect to.
+
+=== Step 5: View Listeners
+
+View listener configuration (what ports Envoy is listening on):
+
+[source,bash]
+----
+istioctl proxy-config listeners $POD_NAME -n $NAMESPACE
+----
+
+=== Step 6: View Routes
+
+View route configuration:
+
+[source,bash]
+----
+istioctl proxy-config routes $POD_NAME -n $NAMESPACE
+----
+
+This shows how requests are routed to upstream services.
+
+== Exercise 6: Monitor Metrics Over Time
+
+In this exercise, you will monitor how metrics change over time by querying them periodically.
+
+=== Step 1: Create a Monitoring Script
+
+Create a simple script to monitor request counts:
+
+[source,bash]
+----
+POD_NAME=$(oc get pod \
+  -n $NAMESPACE \
+  -l app=metrics-test \
+  -o jsonpath='{.items[0].metadata.name}')
+
+for i in {1..5}; do
+  echo "=== Sample $i at $(date) ==="
+  oc exec \
+    -n $NAMESPACE \
+    $POD_NAME \
+    -c istio-proxy -- \
+    pilot-agent request GET stats/prometheus |
+    grep "istio_requests_total.*destination_service_name=\"metrics-test\"" |
+    head -3
+  echo ""
+  sleep 5
+  
+  # Generate some traffic
+  oc exec \
+    -n $NAMESPACE \
+    deploy/curl-client \
+    -c curl -- \
+    curl -s http://metrics-test > /dev/null
+done
+----
+
+=== Step 2: Monitor Error Rates
+
+Monitor error rates over time:
+
+[source,bash]
+----
+POD_NAME=$(oc get pod \
+  -n $NAMESPACE \
+  -l app=metrics-test \
+  -o jsonpath='{.items[0].metadata.name}')
+
+for i in {1..5}; do
+  echo "=== Error Check $i at $(date) ==="
+  oc exec \
+    -n $NAMESPACE \
+    $POD_NAME \
+    -c istio-proxy -- \
+    pilot-agent request GET stats/prometheus |
+    grep "istio_requests_total.*response_code=\"5" |
+    head -3
+  echo ""
+  sleep 5
+done
+----
+
+=== Step 3: Compare Metrics Before and After Traffic
+
+Get baseline metrics:
+
+[source,bash]
+----
+POD_NAME=$(oc get pod \
+  -n $NAMESPACE \
+  -l app=metrics-test \
+  -o jsonpath='{.items[0].metadata.name}')
+
+BASELINE=$(oc exec \
+  -n $NAMESPACE \
+  $POD_NAME \
+  -c istio-proxy -- \
+  pilot-agent request GET stats/prometheus |
+  grep "istio_requests_total.*destination_service_name=\"metrics-test\"" |
+  head -1)
+echo "Baseline: $BASELINE"
+----
+
+Generate traffic:
+
+[source,bash]
+----
+for i in {1..10}; do
+  oc exec \
+    -n $NAMESPACE \
+    deploy/curl-client \
+    -c curl -- \
+    curl -s http://metrics-test > /dev/null
+done
+----
+
+Check metrics after traffic:
+
+[source,bash]
+----
+AFTER=$(oc exec \
+  -n $NAMESPACE \
+  $POD_NAME \
+  -c istio-proxy -- \
+  pilot-agent request GET stats/prometheus |
+  grep "istio_requests_total.*destination_service_name=\"metrics-test\"" |
+  head -1)
+echo "After traffic: $AFTER"
+----
+
+== Exercise 7: Explore Envoy Admin Interface
+
+In this exercise, you will explore the Envoy admin interface to access additional observability information.
+
+=== Step 1: Access Admin Interface
+
+The Envoy admin interface is available on port 15000. Port-forward to access it:
+
+[source,bash]
+----
+POD_NAME=$(oc get pod \
+  -n $NAMESPACE \
+  -l app=metrics-test \
+  -o jsonpath='{.items[0].metadata.name}')
+
+oc port-forward -n $NAMESPACE $POD_NAME 15000:15000 &
+----
+
+=== Step 2: View Server Info
+
+View Envoy server information:
+
+[source,bash]
+----
+curl http://localhost:15000/server_info
+----
+
+This shows Envoy version and build information.
+
+=== Step 3: View Clusters
+
+View cluster information via admin interface:
+
+[source,bash]
+----
+curl http://localhost:15000/clusters | head -50
+----
+
+This shows all upstream clusters with detailed statistics.
+
+=== Step 4: View Listeners
+
+View listener information:
+
+[source,bash]
+----
+curl http://localhost:15000/listeners
+----
+
+=== Step 5: View Config Dump
+
+View the full configuration dump:
+
+[source,bash]
+----
+curl http://localhost:15000/config_dump | head -100
+----
+
+This provides a JSON representation of the entire Envoy configuration.
+
+=== Step 6: View Stats
+
+View statistics in JSON format:
+
+[source,bash]
+----
+curl "http://localhost:15000/stats?format=json" | head -100
+----
+
+=== Step 7: Stop Port-Forwarding
+
+Stop the port-forward:
+
+[source,bash]
+----
+pkill -f "port-forward.*15000"
+----
+
+== Summary
+
+In these exercises, you have:
+
+* Accessed Prometheus-formatted metrics directly from Envoy sidecar proxies
+* Queried metrics from multiple pods and compared load distribution
+* Viewed and analyzed Envoy access logs to understand request patterns
+* Used `istioctl` commands to view proxy configuration and statistics
+* Monitored metrics over time to observe changes
+* Explored the Envoy admin interface for additional observability data
+
+These skills enable you to gain deep insights into your service mesh behavior using only the tools built into Istio and Envoy, without requiring external observability tools.
+
+== Troubleshooting
+
+If you encounter issues:
+
+* *Cannot access metrics endpoint*: Verify the pod has a sidecar injected and check that port 15020 is accessible
+* *No metrics appearing*: Ensure traffic has been generated to create metrics
+* *Logs not showing*: Verify access logging is enabled in your Istio configuration
+* *istioctl not working*: Ensure istioctl is installed and can connect to your cluster
+* *Port-forwarding fails*: Check that the pod is running and the ports are not already in use
+* *Admin interface not accessible*: Verify port 15000 is available and not blocked by network policies
+

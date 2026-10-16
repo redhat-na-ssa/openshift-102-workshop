@@ -1,0 +1,132 @@
+= Module 1: Overview
+:hardbreaks-option:
+
+This module provides a comprehensive introduction to Istio service mesh, covering the fundamental concepts that form the foundation of service mesh technology. You will learn about the benefits of Istio, the strengths of Envoy proxy, and the basics of sidecar architecture.
+
+== What is Istio?
+
+Istio is an open-source service mesh platform that provides a uniform way to connect, secure, control, and observe microservices. It addresses the challenges of managing microservices by providing a dedicated infrastructure layer that handles service-to-service communication, security, and observability without requiring changes to application code.
+
+== Benefits of Istio
+
+Istio offers numerous advantages for organizations running microservices in Kubernetes environments:
+
+=== Traffic Management
+
+Istio provides sophisticated traffic management capabilities that enable you to:
+
+* Control the flow of traffic and API calls between services
+* Implement intelligent routing rules, including canary deployments and A/B testing
+* Configure circuit breakers, timeouts, and retries to improve application resilience
+* Perform traffic splitting and mirroring for gradual rollouts
+
+=== Security
+
+Security is a core strength of Istio:
+
+* *Mutual TLS (mTLS)*: Automatic encryption of service-to-service communication
+* *Authentication and Authorization*: Fine-grained access control policies
+* *Certificate Management*: Automated certificate provisioning and rotation
+* *Network Policies*: Enforcement of security policies at the network layer
+
+=== Observability
+
+Istio provides comprehensive observability without modifying application code:
+
+* *Metrics*: Rich telemetry data for services, including request rates, latency, and error rates
+* *Distributed Tracing*: End-to-end visibility into request flows across services
+* *Access Logs*: Detailed logging of all service interactions
+* *Service Topology*: Visual representation of service dependencies and communication patterns
+
+=== Policy Enforcement
+
+Istio enables you to enforce policies consistently across your microservices:
+
+* Rate limiting and quota management
+* Access control policies
+* Network-level policies
+* Compliance and governance enforcement
+
+== Strengths of Envoy
+
+Envoy is a high-performance, open-source edge and service proxy designed for cloud-native applications. Istio uses Envoy as its data plane proxy, and Envoy's architecture provides several key strengths:
+
+=== Performance
+
+* *High Throughput*: Envoy is written in C++ and optimized for performance, capable of handling millions of requests per second
+* *Low Latency*: Minimal overhead added to service-to-service communication
+* *Efficient Resource Usage*: Designed to be lightweight and resource-efficient
+
+=== Advanced Features
+
+Envoy provides a rich set of features that make it ideal for service mesh implementations:
+
+* *Load Balancing*: Multiple algorithms including round-robin, least-request, ring hash, and more
+* *Service Discovery*: Dynamic service discovery with support for multiple backends
+* *Health Checking*: Active and passive health checking of upstream services
+* *Circuit Breaking*: Automatic failure detection and circuit breaking
+* *Retry Logic*: Configurable retry policies with exponential backoff
+
+=== Observability
+
+Envoy generates extensive telemetry data:
+
+* *Access Logs*: Detailed HTTP/gRPC access logs
+* *Metrics*: Prometheus-compatible metrics for monitoring
+* *Distributed Tracing*: Built-in support for tracing with various backends
+
+=== Extensibility
+
+Envoy's architecture supports extensibility:
+
+* *WebAssembly (WASM) Filters*: Custom logic can be added via WASM plugins
+* *Lua Scripting*: Support for Lua-based custom filters
+* *Plugin Architecture*: Modular design allows for custom extensions
+
+== Sidecar Architecture Basics
+
+The sidecar pattern is a fundamental architectural pattern used by Istio and other service mesh implementations. Understanding this pattern is crucial to understanding how service meshes work.
+
+=== What is a Sidecar?
+
+A sidecar is a container that runs alongside your application container in the same pod. In Kubernetes, a pod can contain multiple containers, and the sidecar pattern leverages this capability to inject a proxy container (Envoy, in Istio's case) that handles all network communication for the application.
+
+=== How Sidecars Work
+
+The sidecar architecture operates as follows:
+
+. *Application Container*: Your application runs in its primary container, making outbound requests and receiving inbound requests as it normally would.
+
+. *Sidecar Proxy*: The Envoy sidecar proxy intercepts all network traffic to and from the application container.
+
+. *Traffic Interception*: The sidecar uses iptables rules (or eBPF in newer implementations) to redirect traffic through the proxy without the application being aware.
+
+. *Policy Enforcement*: The sidecar applies security policies, routing rules, and collects telemetry data based on configuration from the control plane.
+
+=== Benefits of the Sidecar Pattern
+
+The sidecar architecture provides several advantages:
+
+* *Transparency*: Applications don't need to be modified to benefit from service mesh features
+* *Separation of Concerns*: Network and security logic is separated from business logic
+* *Consistency*: All services use the same proxy, ensuring consistent behavior
+* *Independent Updates*: The sidecar can be updated independently of the application
+
+=== Sidecar Injection
+
+Istio uses automatic sidecar injection to add the Envoy proxy to pods:
+
+* *Mutating Webhook*: Kubernetes admission controller automatically injects the sidecar when pods are created
+* *Namespace Labeling*: Pods in namespaces labeled with `istio-injection=enabled` automatically receive sidecars
+* *Manual Injection*: Sidecars can also be injected manually using the `istioctl` command
+
+== Summary
+
+In this module, we quickly reviewed the following concepts:
+
+* Istio is a powerful service mesh platform that provides traffic management, security, and observability for microservices
+* Envoy proxy offers high performance, advanced features, and extensive observability capabilities
+* The sidecar architecture pattern enables transparent network management without modifying applications
+* Istio's sidecar injection mechanism automatically adds Envoy proxies to your pods
+
+In the next module, you will learn how to manage traffic in your mesh using Gateways and VirtualServices.

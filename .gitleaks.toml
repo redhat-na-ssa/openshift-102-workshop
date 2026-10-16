@@ -1,0 +1,50 @@
+# Gitleaks configuration for the OpenShift 102 workshops (merged from the four
+# workshops' own configs when they were folded into this repository).
+#
+# Keeps every built-in gitleaks rule and adds a rule for hard-coded
+# passwords. Workshop content contains a few placeholder passwords and demo
+# tokens on purpose; each one is allowlisted below by its exact value, so
+# any other password or token still fails the scan.
+#
+# Run locally:
+#   gitleaks git --config .gitleaks.toml .
+#   gitleaks dir --config .gitleaks.toml .
+
+title = "Workshop gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "hardcoded-password"
+description = "Password written as a literal value in YAML, a shell variable or a CLI flag"
+regex = '''(?i)(?:--[\w-]*(?:passw(?:or)?d|passwd)(?:=|[ \t]+)|\b[\w.-]*(?:passw(?:or)?d|passwd|sshpass)[\w.-]*["']?[ \t]*[:=][ \t]*)["']?([^\s"'`$\\{}()<>|#,;\[\]]{3,})'''
+secretGroup = 1
+keywords = ["pass"]
+
+[[rules.allowlists]]
+description = "Placeholder passwords used in the workshop content"
+regexTarget = "secret"
+regexes = [
+  # ssh_password default from the Showroom template (content/antora.yml, removed since)
+  '''^devops$''',
+  # docker-registry pull secret example (deploy workshop)
+  '''^mypassword$''',
+]
+
+# Istio workshop: Istio's public demo JWT (iss/sub testing@secure.istio.io, claim foo=bar),
+# published in the Istio docs and used for the RequestAuthentication exercise.
+[[rules]]
+id = "jwt"
+[[rules.allowlists]]
+description = "Istio demo JWT"
+regexTarget = "secret"
+regexes = ['''^eyJhbGciOiJSUzI1NiIsImtpZCI6IkRIRmJwb0lVcXJZOHQyenBBMnFYZkNtcjVWTzVaRXI0UnpIVV8tZW52dlEiLCJ0eXAiOiJKV1QifQ\.eyJleHAiOjQ2ODU5ODk3MDAsImZvbyI6ImJhciIsImlhdCI6MTUzMjM4OTcwMCwiaXNzIjoidGVzdGluZ0BzZWN1cmUuaXN0aW8uaW8iLCJzdWIiOiJ0ZXN0aW5nQHNlY3VyZS5pc3Rpby5pbyJ9\.CfNnxWP2tcnR9q0vxyxweaF3ovQYHYZl82hAUsn21bwQd9zP7c\-LS9qd_vpdLG4Tn1A15NxfCjp5f7QNBUo\-KC9PJqYpgGbaXhaGx7bEdFWjcwv3nZzvc7M__ZpaCERdwU7igUmJqYGBYQ51vr2njU9ZimyKkfDe3axcyiBZde7G6dabliUosJvvKOPcKIWPccCgefSj_GNfwIip3\-SsFdlR7BtbVUcqR\-yv\-XOxJ3Uc1MI0tz3uMiiZcyPV7sNCU4KRnemRIMHVOfuvHsU60_GhGbiSFzgPTAa9WTltbnarTbxudb_YEOx12JiwYToeX0DCPb43W1tzIBxgm8NxUg$''']
+
+# Istio workshop: the exercise sends a deliberately invalid bearer token to show a 401.
+[[rules]]
+id = "curl-auth-header"
+[[rules.allowlists]]
+description = "Deliberately invalid bearer token"
+regexTarget = "secret"
+regexes = ['''^invalid-token$''']

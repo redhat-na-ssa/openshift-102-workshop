@@ -1,0 +1,282 @@
+= Grafana Dashboards
+:hardbreaks-option:
+
+This module shows how to use your PromQL queries in Grafana dashboards. You will run your own Grafana instance in your project, connect it to the metrics of your project through Thanos Querier, and define a dashboard as a Kubernetes resource.
+
+OpenShift does not ship Grafana. The web console has its own dashboards under *Observe* -> *Dashboards*, but to build your own Grafana dashboards you deploy Grafana yourself. This module uses the community Grafana Operator (version 5), which manages Grafana instances, data sources and dashboards through custom resources in the `grafana.integreatly.org/v1beta1` API group. The community operator is not supported by Red Hat.
+
+The dashboard in this module uses the metrics of the sample application and the recording rules from Module 5. The panels based on container metrics work without them.
+
+== Prerequisites
+
+A cluster administrator installs the Grafana Operator once for the whole cluster, as described in xref:setup-requirements.adoc[Setup Requirements]. When the operator is installed, project administrators and editors can create its resources in their projects. Check that you can:
+
+[source,bash]
+----
+oc auth can-i create grafanas.grafana.integreatly.org
+oc auth can-i create grafanadatasources.grafana.integreatly.org
+oc auth can-i create grafanadashboards.grafana.integreatly.org
+----
+
+Each command prints `yes` if you have the permission.
+
+== How Grafana Reaches the Metrics of Your Project
+
+Grafana runs as a pod in your project and sends PromQL queries to the tenancy port 9092 of Thanos Querier, the same endpoint you used with `curl` in xref:module-01-content.adoc#_querying_your_project_as_a_project_user[Module 1]. The data source must therefore meet the same requirements:
+
+* *Project parameter* - every request must include the `namespace=<project>` query parameter. The Prometheus data source of Grafana adds extra parameters to every request with the `customQueryParameters` setting.
+* *Authentication* - every request must carry a bearer token of an identity with the `view` role in the project. Grafana uses the token of a dedicated service account, which it sends in an `Authorization` header that is configured with `httpHeaderName1` and `httpHeaderValue1`.
+* *HTTP method* - the data source must use `GET` requests. Grafana uses `POST` by default, which the tenancy port checks against the `create` verb that the `view` role does not grant.
+* *TLS* - the certificate of Thanos Querier is signed by the internal service CA of the cluster, which Grafana does not trust by default. The examples set `tlsSkipVerify: true`. To verify the certificate instead, set `tlsAuthWithCACert: true` in `jsonData` and the service CA as `tlsCACert` in `secureJsonData`. The service CA is available in the `service-ca.crt` key of the token secret that you create below, so you can insert it with another `valuesFrom` entry.
+
+Because the tenancy port only returns series of your project, all panels show data of your project only, even if their queries have no `namespace` matcher.
+
+== Creating a Grafana Instance
+
+A `Grafana` resource creates a Grafana deployment, a service and, with the `route` field, an OpenShift route. Other Grafana Operator resources select the Grafana instances they apply to by their labels, here `dashboards: grafana`:
+
+[source,yaml]
+----
+apiVersion: grafana.integreatly.org/v1beta1
+kind: Grafana
+metadata:
+  name: grafana
+  labels:
+    dashboards: grafana
+spec:
+  route:
+    spec:
+      tls:
+        termination: edge
+        insecureEdgeTerminationPolicy: Redirect
+  config:
+    log:
+      mode: console
+----
+
+The operator generates an administrator password and stores it with the user name in the `grafana-admin-credentials` secret. The route is named `grafana-route`.
+
+== Creating a Service Account for Grafana
+
+Create a service account for Grafana, give it the `view` role in your project, and create a long-lived token for it in a secret of type `kubernetes.io/service-account-token`:
+
+[source,bash]
+----
+oc create serviceaccount grafana-thanos
+oc create rolebinding grafana-thanos-view \
+  --clusterrole=view \
+  --serviceaccount="$(oc project -q):grafana-thanos"
+----
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-thanos-token
+  annotations:
+    kubernetes.io/service-account.name: grafana-thanos
+type: kubernetes.io/service-account-token
+----
+
+Create the secret after the service account exists. OpenShift then fills the secret with the keys `token` (the token of the service account), `ca.crt`, `service-ca.crt` and `namespace` (the name of your project).
+
+NOTE: A token in a `kubernetes.io/service-account-token` secret does not expire. Anyone who can read the secret can query the metrics of your project. To revoke the token, delete the secret.
+
+== Creating the Data Source
+
+A `GrafanaDatasource` resource creates a data source in the selected Grafana instances. Its `valuesFrom` field copies values from secrets or config maps into the data source: the operator replaces `${<key>}` in the field named by `targetPath` with the value of that key. Here it inserts the token and the project name from the token secret, so the manifest does not contain either:
+
+[source,yaml]
+----
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: thanos-querier
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  valuesFrom:
+  - targetPath: secureJsonData.httpHeaderValue1
+    valueFrom:
+      secretKeyRef:
+        name: grafana-thanos-token
+        key: token
+  - targetPath: jsonData.customQueryParameters
+    valueFrom:
+      secretKeyRef:
+        name: grafana-thanos-token
+        key: namespace
+  datasource:
+    name: thanos-querier
+    uid: thanos-querier
+    type: prometheus
+    access: proxy
+    url: https://thanos-querier.openshift-monitoring.svc.cluster.local:9092
+    isDefault: true
+    jsonData:
+      httpMethod: GET
+      customQueryParameters: namespace=${namespace}
+      httpHeaderName1: Authorization
+      tlsSkipVerify: true
+      timeInterval: 30s
+    secureJsonData:
+      httpHeaderValue1: Bearer ${token}
+----
+
+`timeInterval` tells Grafana the scrape interval of the metrics, so that it does not choose a query step shorter than the interval at which samples exist.
+
+== Creating a Dashboard
+
+A `GrafanaDashboard` resource contains the JSON model of a Grafana dashboard in its `json` field. You can build a dashboard in the Grafana UI, export its JSON model from the export or share menu of the dashboard, and paste it into the resource.
+
+The panels of this dashboard refer to their data source as `+${DS_PROMETHEUS}+`, and the `datasources` field tells the operator to replace that placeholder with the name of the data source. The operator puts that name where Grafana expects the data source's UID, so the `GrafanaDatasource` above sets `uid` to the same value as `name`; without it, Grafana generates a different UID and queries that look up the data source by UID fail with `Data source not found`.
+The same dashboard can therefore be used with a data source of a different name:
+
+[source,yaml]
+----
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: prometheus-example-app
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  datasources:
+  - inputName: DS_PROMETHEUS
+    datasourceName: thanos-querier
+  json: |
+    {
+      "title": "Prometheus Example App",
+      "uid": "prometheus-example-app",
+      "schemaVersion": 39,
+      "time": {"from": "now-1h", "to": "now"},
+      "refresh": "30s",
+      "panels": [
+        {
+          "id": 1,
+          "type": "timeseries",
+          "title": "Request rate by status code",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+              "expr": "sum by (code) (rate(http_requests_total{job=\"prometheus-example-app\"}[5m]))",
+              "legendFormat": "{{code}}"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "type": "timeseries",
+          "title": "Error ratio (5xx)",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0}, "overrides": []},
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+              "expr": "namespace_job:http_requests_errors:ratio_rate5m{job=\"prometheus-example-app\"}",
+              "legendFormat": "{{job}}"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "type": "timeseries",
+          "title": "Memory working set by pod",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+              "expr": "sum by (pod) (container_memory_working_set_bytes{container!=\"\", container!=\"POD\"})",
+              "legendFormat": "{{pod}}"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "type": "timeseries",
+          "title": "CPU usage by pod (cores)",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+              "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{container!=\"\", container!=\"POD\"}[5m]))",
+              "legendFormat": "{{pod}}"
+            }
+          ]
+        }
+      ]
+    }
+----
+
+The queries are the ones you wrote in the earlier modules:
+
+[source,promql]
+----
+# Request rate of the sample application per status code
+# (Module 4 and 5)
+sum by (code) (rate(http_requests_total{
+  job="prometheus-example-app"
+}[5m]))
+
+# Recorded error ratio (Module 5)
+namespace_job:http_requests_errors:ratio_rate5m{
+  job="prometheus-example-app"
+}
+
+# Memory usage per pod (Module 3)
+sum by (pod) (container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+})
+
+# CPU usage per pod, in cores (Module 3 and 4)
+sum by (pod) (rate(container_cpu_usage_seconds_total{
+  container!="",
+  container!="POD"
+}[5m]))
+----
+
+In the JSON model, double quotes inside a query are escaped as `\"`. The `legendFormat` field names each series by the value of a label, using the syntax `+{{label}}+`.
+
+The operator owns the dashboards that it creates. If you change such a dashboard in the Grafana UI, the operator overwrites your changes the next time it synchronizes the resource. Make changes in the `GrafanaDashboard` resource instead, or save a modified dashboard under a new name.
+
+== Opening Grafana
+
+Get the URL of Grafana from the route, and the user name and password from the `grafana-admin-credentials` secret:
+
+[source,bash]
+----
+echo "https://$(oc get route grafana-route \
+  -o jsonpath='{.spec.host}')"
+oc extract secret/grafana-admin-credentials --to=-
+----
+
+The secret contains the keys `GF_SECURITY_ADMIN_USER` and `GF_SECURITY_ADMIN_PASSWORD`. Log in with these credentials. The dashboard is listed under *Dashboards*, and you can run ad-hoc queries against the data source in *Explore*.
+
+Some features of the Prometheus data source, such as metric metadata in the query editor, use API endpoints that the tenancy port does not serve. Grafana then shows fewer suggestions, but queries and dashboards work.
+
+== Summary
+
+In this module, you learned:
+
+* That OpenShift does not ship Grafana, and that a cluster administrator installs the community Grafana Operator
+* How to create a Grafana instance with a route in your project
+* How to connect Grafana to the metrics of your project through the Thanos Querier tenancy port, with a service account token, the `namespace` parameter and `GET` requests
+* How to define a dashboard as a `GrafanaDashboard` resource that uses the queries from the earlier modules
+
+You now have the knowledge to write PromQL queries, turn them into recording and alerting rules, and visualize them in Grafana dashboards for the applications in your OpenShift projects.

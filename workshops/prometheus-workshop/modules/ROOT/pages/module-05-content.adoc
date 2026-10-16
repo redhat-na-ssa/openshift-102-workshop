@@ -1,0 +1,314 @@
+= Alerting Rules with User Workload Monitoring
+:hardbreaks-option:
+
+This module shows how to turn PromQL queries into recording rules and alerting rules for your own applications. You will deploy a sample application in your project, collect its metrics with a `ServiceMonitor`, define rules in a `PrometheusRule`, and view and silence the resulting alerts as a project user.
+
+== Prerequisites
+
+Alerting for user projects is built on the *user workload monitoring* stack of OpenShift, which is disabled by default. Before you can do the exercises in this module, a cluster administrator enables user workload monitoring and grants you the `monitoring-edit` role in your project, as described in xref:setup-requirements.adoc[Setup Requirements].
+
+User workload monitoring is meant for your own projects, not for the namespaces of the OpenShift platform such as `openshift-*` and `kube-*`, and it skips namespaces labeled `openshift.io/user-monitoring=false`. Use your own workshop project for this module.
+
+=== Monitoring Roles for User Projects
+
+As a project administrator you can deploy applications, but creating monitoring resources requires additional roles in your project:
+
+* `monitoring-rules-view` - read `PrometheusRule` objects, and read the alerts and rules of the project through the API
+* `monitoring-rules-edit` - additionally create, change and delete `PrometheusRule` objects, and create silences for the alerts of the project
+* `monitoring-edit` - additionally create `ServiceMonitor` and `PodMonitor` objects, which this module needs to collect the metrics of the sample application
+
+Querying the metrics of a project still requires the `view` role (or higher) in that project, which a project administrator already has.
+
+== How User Workload Monitoring Evaluates Your Rules
+
+When user workload monitoring is enabled, OpenShift runs a second monitoring stack next to the platform monitoring stack:
+
+* The `prometheus-user-workload` Prometheus scrapes the targets that you define with `ServiceMonitor` and `PodMonitor` objects in your project.
+* The `thanos-ruler-user-workload` Thanos Ruler evaluates the rules in your `PrometheusRule` objects. Because it queries through Thanos Querier, your rules can also use platform metrics about your project, such as `kube_pod_container_status_restarts_total` or `container_memory_working_set_bytes`. If a `PrometheusRule` only uses metrics from your own targets, you can add the label `openshift.io/prometheus-rule-evaluation-scope: leaf-prometheus` to it, and the user workload Prometheus evaluates it instead, which is faster and keeps working when Thanos Querier is unavailable.
+* Firing alerts are sent to the platform Alertmanager in the `openshift-monitoring` namespace, unless the cluster administrator has configured a separate Alertmanager for user projects.
+
+OpenShift keeps the rules of one project from seeing the data of another project. It adds the matcher `namespace="<your project>"` to every selector in your rule expressions, and the label `namespace="<your project>"` to every recorded series and every alert. A rule like `sum(rate(http_requests_total[5m]))` therefore only ever sums the series of your own project.
+
+== Deploying a Sample Application
+
+The rules in this module use the metrics of `prometheus-example-app`, a small web server that exposes Prometheus metrics. It is the same sample application that the OpenShift documentation uses. It listens on port 8080 and answers:
+
+* `/` with `200 OK`
+* `/err` with `404 Not Found`
+* `/internal-err` with `500 Internal Server Error`
+* `/metrics` with its metrics in the Prometheus text format
+
+It exposes these metrics:
+
+* `http_requests_total` - a counter of the requests to `/`, `/err` and `/internal-err`, with the labels `code` (for example `200`, `404`, `500`) and `method` (for example `get`)
+* `http_request_duration_seconds` - a histogram of the duration of the requests to `/`
+* `version` - a gauge that is always `1`, with the application version in its `version` label
+
+The following manifest creates a Deployment and a Service for the application. The container runs under the default `restricted-v2` security context constraint:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-example-app
+  labels:
+    app: prometheus-example-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus-example-app
+  template:
+    metadata:
+      labels:
+        app: prometheus-example-app
+    spec:
+      containers:
+      - name: prometheus-example-app
+        image: quay.io/brancz/prometheus-example-app:v0.5.0
+        ports:
+        - name: web
+          containerPort: 8080
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-example-app
+  labels:
+    app: prometheus-example-app
+spec:
+  selector:
+    app: prometheus-example-app
+  ports:
+  - name: web
+    port: 8080
+    targetPort: 8080
+----
+
+== Collecting Metrics with a ServiceMonitor
+
+A `ServiceMonitor` tells the user workload Prometheus which services to scrape. This one selects the Service above by its `app` label and scrapes its `web` port every 30 seconds:
+
+[source,yaml]
+----
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: prometheus-example-app
+spec:
+  selector:
+    matchLabels:
+      app: prometheus-example-app
+  endpoints:
+  - port: web
+    interval: 30s
+----
+
+The scraped series get the label `job="prometheus-example-app"` (the name of the Service), plus `namespace`, `pod`, `service` and `instance` labels. Once the target is scraped, the `up` series of the target has the value 1:
+
+[source,promql]
+----
+up{job="prometheus-example-app"}
+----
+
+== Recording Rules
+
+A recording rule evaluates a PromQL expression at a regular interval and stores the result as a new time series. Use recording rules for expressions that dashboards and alerts use often or that are expensive to compute.
+
+By convention, the name of a recorded series has the form `level:metric:operations`:
+
+* `level` - the labels that the result is aggregated by, such as `namespace_job`
+* `metric` - the name of the underlying metric, without the `_total` suffix of counters
+* `operations` - the functions and aggregations applied, such as `rate5m` or `ratio_rate5m`
+
+The following recording rules record the request rate and the share of requests that failed with a `5xx` code, per job:
+
+[source,promql]
+----
+# Recorded as namespace_job:http_requests:rate5m
+sum by (namespace, job) (rate(http_requests_total[5m]))
+
+# Recorded as namespace_job:http_requests_errors:ratio_rate5m
+sum by (namespace, job) (rate(http_requests_total{code=~"5.."}[5m]))
+  /
+sum by (namespace, job) (rate(http_requests_total[5m]))
+----
+
+The error ratio has no value until the application has served its first `5xx` response. Before that, the numerator has no series, so the division returns nothing, and an alert based on it stays inactive. After the first `5xx`, the series exists and the ratio is 0 whenever no errors occurred in the last 5 minutes.
+
+== Alerting Rules
+
+An alerting rule is a PromQL expression that returns the series that are in a bad state. Each series that the expression returns becomes an alert. An alerting rule has these fields:
+
+* `alert` - the name of the alert
+* `expr` - the PromQL expression; every series in its result is an active alert
+* `for` - how long the expression must keep returning a series before the alert fires. Until then, the alert is *pending*. A `for` duration prevents short spikes from causing notifications.
+* `labels` - labels added to the alert, such as `severity`, which Alertmanager can use to route notifications. Common values are `critical`, `warning` and `info`.
+* `annotations` - descriptive text, such as `summary` and `description`. Annotations can use templates: `{{ $labels.<name> }}` inserts the value of a label of the series, and `{{ $value }}` inserts its value. Template functions such as `humanizePercentage` format the value.
+
+The following alerting rules fire when more than 5% of the requests of the sample application fail, and when Prometheus no longer has a target for the application:
+
+[source,promql]
+----
+# Alert ExampleAppHighErrorRate
+namespace_job:http_requests_errors:ratio_rate5m{
+  job="prometheus-example-app"
+} > 0.05
+
+# Alert ExampleAppTargetMissing
+absent(up{job="prometheus-example-app"})
+----
+
+`absent()` returns a series with the value 1 when its argument returns no series, and nothing otherwise. Use it to detect missing data: when all pods of the application are gone, there is no `up` series for it, so an alert on `up{job="prometheus-example-app"} == 0` would never fire.
+
+== Defining Rules in a PrometheusRule
+
+Recording rules and alerting rules are defined in groups in a `PrometheusRule` object. The rules in a group are evaluated in order, so an alerting rule can use a series recorded earlier in the same group:
+
+[source,yaml]
+----
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: prometheus-example-app
+spec:
+  groups:
+  - name: prometheus-example-app.rules
+    rules:
+    - record: namespace_job:http_requests:rate5m
+      expr: sum by (namespace, job) (rate(http_requests_total[5m]))
+    - record: namespace_job:http_requests_errors:ratio_rate5m
+      expr: |
+        sum by (namespace, job) (rate(http_requests_total{code=~"5.."}[5m]))
+          /
+        sum by (namespace, job) (rate(http_requests_total[5m]))
+    - alert: ExampleAppHighErrorRate
+      expr: namespace_job:http_requests_errors:ratio_rate5m{job="prometheus-example-app"} > 0.05
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: High error rate for {{ $labels.job }} in {{ $labels.namespace }}
+        description: '{{ $value | humanizePercentage }} of the requests to {{ $labels.job }} in namespace {{ $labels.namespace }} failed with a 5xx code over the last 5 minutes.'
+    - alert: ExampleAppTargetMissing
+      expr: absent(up{job="prometheus-example-app"})
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: No target for prometheus-example-app in {{ $labels.namespace }}
+        description: 'Prometheus has not scraped any target of the job prometheus-example-app in namespace {{ $labels.namespace }} for at least 1 minute. Check that the pods of the application are running.'
+----
+
+Values that start with `{`, such as `'{{ $value | humanizePercentage }} ...'`, must be quoted in YAML.
+
+=== Checking Rules Before You Apply Them
+
+If you have the `promtool` command of a Prometheus release, you can check the syntax of the rules before you apply them. `promtool` expects a file with a top-level `groups` key, which is the `spec` of the `PrometheusRule`. Save the `spec` of the manifest above, without the `apiVersion`, `kind`, `metadata` and `spec:` lines and with the indentation removed, as `rules.yaml`, and run:
+
+[source,bash]
+----
+promtool check rules rules.yaml
+----
+
+For a `PrometheusRule` that already exists in your project, you can check its `spec` directly. JSON is valid YAML, so `promtool` can read the output of `oc get`:
+
+[source,bash]
+----
+oc get prometheusrule prometheus-example-app \
+  -o jsonpath='{.spec}' > rules.json
+promtool check rules rules.json
+----
+
+OpenShift also validates every `PrometheusRule` when you create it, and rejects rules with invalid PromQL.
+
+== Viewing Alerts
+
+=== In the Web Console
+
+In the *Developer* perspective, navigate to *Observe* and open the *Alerts* tab. It lists the alerting rules of the selected project and the state of their alerts:
+
+* *Pending* - the expression returns a series, but not yet for the `for` duration
+* *Firing* - the expression has returned the series for at least the `for` duration; the alert has been sent to Alertmanager
+* *Silenced* - the alert is firing, but a silence suppresses its notifications
+
+From OpenShift 4.19, the *Developer* perspective is disabled by default. If your console does not offer it, ask your cluster administrator to enable it, or use the API as described in the next section.
+
+=== Through the Thanos Querier API
+
+The `thanos-querier` service in the `openshift-monitoring` namespace has a second tenancy port, 9093, that serves the `/api/v1/alerts` and `/api/v1/rules` endpoints for one project. Like port 9092 for queries (see xref:module-01-content.adoc#_querying_your_project_as_a_project_user[Module 1]), it requires the `namespace=<project>` query parameter and a bearer token. The user needs the `monitoring-rules-view`, `monitoring-rules-edit` or `monitoring-edit` role in the project.
+
+Send the request from the `api-client` pod in your project:
+
+[source,bash]
+----
+NS=$(oc project -q)
+TOKEN=$(oc whoami -t)
+
+# Active (pending and firing) alerts of your project
+oc exec -n "$NS" api-client -- curl -sk -G \
+  -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode "namespace=$NS" \
+  https://thanos-querier.openshift-monitoring.svc:9093/api/v1/alerts
+
+# Alerting and recording rules of your project,
+# with their state and last evaluation
+oc exec -n "$NS" api-client -- curl -sk -G \
+  -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode "namespace=$NS" \
+  https://thanos-querier.openshift-monitoring.svc:9093/api/v1/rules
+----
+
+You can also query the `ALERTS` series, which records the state of every pending and firing alert, through the tenancy port 9092 or in *Observe* -> *Metrics*:
+
+[source,promql]
+----
+ALERTS{alertstate="firing"}
+----
+
+== Silencing Alerts
+
+A silence suppresses the notifications for matching alerts for a limited time, for example during planned maintenance. The alert keeps firing and keeps being evaluated; only Alertmanager stops sending notifications for it. Silences do not change the alerting rules.
+
+Creating silences for the alerts of your project requires the `monitoring-rules-edit` or `monitoring-edit` role in the project. Every silence that you create is restricted to your project: OpenShift adds the matcher `namespace="<your project>"` to it.
+
+To silence an alert in the web console:
+
+. In the *Developer* perspective, navigate to *Observe* and open the *Alerts* tab.
+. Open the options menu of the firing alert and select *Silence alert*.
+. Set the duration of the silence, enter a comment that explains why the alert is silenced, and click *Silence*.
+
+The silence matches the labels of the alert. While it is active, the alert is shown as silenced. To end a silence early, expire it.
+
+Alertmanager also has a tenancy port, 9092 of the `alertmanager-main` service in the `openshift-monitoring` namespace, which serves the Alertmanager API for one project. The exercises show how to create a silence with it.
+
+== Best Practices for Alerting Rules
+
+* Alert on symptoms that matter to the users of a service, such as error rates and latency, rather than on every possible cause.
+* Use a `for` duration so that short spikes do not cause notifications. A few minutes is a typical value.
+* Use a `rate()` range of at least four times the scrape interval, so that a single missed scrape does not change the result much.
+* Add a `severity` label, and annotations with a `summary` and a `description` that tell the person who receives the alert what is wrong and where.
+* Use `absent()` to detect targets or metrics that disappear completely.
+* Record expressions that several alerts and dashboards share as recording rules, and build the alerts on the recorded series.
+
+== Summary
+
+In this module, you learned:
+
+* That alerting for user projects requires user workload monitoring, which a cluster administrator enables, and the `monitoring-edit` or `monitoring-rules-edit` role in the project
+* How to collect the metrics of an application with a `ServiceMonitor`
+* How to write recording rules and alerting rules with `for`, `labels` and `annotations`
+* How OpenShift restricts the rules, alerts and silences of a project to that project
+* How to view alerts in the web console and through the Thanos Querier tenancy API
+* How to silence alerts
+
+In the next module, you will visualize the metrics of your project in Grafana dashboards.

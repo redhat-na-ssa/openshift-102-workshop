@@ -1,0 +1,686 @@
+= Exercises
+:hardbreaks-option:
+
+== Exercise 1: Creating and Using Helper Functions
+
+In this exercise, you will use a helper function (named template) to generate a Kubernetes resource.
+Helper functions allow you to encapsulate common patterns and reuse them throughout your chart.
+
+=== Step 1: Create a New Chart
+
+Create a new Helm chart for this exercise:
+
+[source,powershell]
+----
+helm create helper-chart
+----
+
+[source,bash]
+----
+helm create helper-chart
+----
+
+=== Step 2: Find the Helper Function
+
+`helm create` already generated a `_helpers.tpl` file that contains a helper function for standard labels.
+Navigate to the templates directory and open `_helpers.tpl`:
+
+[source,powershell]
+----
+cd helper-chart\templates
+notepad _helpers.tpl
+----
+
+[source,bash]
+----
+cd helper-chart/templates
+# open _helpers.tpl in an editor, for example: vi _helpers.tpl
+----
+
+Find the `helper-chart.labels` helper function.
+It looks like this:
+
+[source,yaml]
+----
+{{- define "helper-chart.labels" -}}
+helm.sh/chart: {{ include "helper-chart.chart" . }}
+{{ include "helper-chart.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+----
+
+This helper function creates a set of standard labels that can be reused across multiple resources.
+Do not paste a second copy of it into the file: each template name can be defined only once, and a duplicate `define` makes rendering fail with `multiple definition of template "helper-chart.labels"`.
+
+=== Step 3: Create a Resource Using the Helper
+
+Create a new template file that uses your helper function to create a ConfigMap:
+
+[source,powershell]
+----
+New-Item -Path "configmap.yaml" -ItemType File
+----
+
+[source,bash]
+----
+touch configmap.yaml
+----
+
+Open `configmap.yaml` and add the following content:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "helper-chart.fullname" . }}-config
+  labels:
+{{ include "helper-chart.labels" . | indent 4 }}
+data:
+  app.properties: |
+    environment={{ .Values.environment | default "development" }}
+    logLevel={{ .Values.logLevel | default "info" }}
+----
+
+This ConfigMap uses the `helper-chart.labels` helper function to apply consistent labels.
+
+=== Step 4: Test Your Template
+
+Use `helm template` to render your chart and verify that the helper function works correctly:
+
+[source,powershell]
+----
+cd ..\..
+helm template test-release ./helper-chart
+----
+
+[source,bash]
+----
+cd ../..
+helm template test-release ./helper-chart
+----
+
+Review the output to confirm that:
+
+* The ConfigMap is created with the correct name
+* The labels from your helper function are properly applied
+* The labels are correctly indented in the YAML output
+
+=== Step 5: Verify the Helper Function Reusability
+
+Create another resource (for example, a Secret) that also uses the same helper function:
+
+[source,powershell]
+----
+cd helper-chart\templates
+New-Item -Path "secret.yaml" -ItemType File
+----
+
+[source,bash]
+----
+cd helper-chart/templates
+touch secret.yaml
+----
+
+Add content to `secret.yaml`:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "helper-chart.fullname" . }}-secret
+  labels:
+{{ include "helper-chart.labels" . | indent 4 }}
+type: Opaque
+data:
+  password: {{ .Values.password | default "changeme" | b64enc }}
+----
+
+Render the chart again to see both resources using the same helper function:
+
+[source,powershell]
+----
+cd ..\..
+helm template test-release ./helper-chart
+----
+
+[source,bash]
+----
+cd ../..
+helm template test-release ./helper-chart
+----
+
+Notice how both the ConfigMap and Secret now have identical labels, demonstrating how helper functions enable consistency across resources while eliminating duplication.
+
+== Exercise 2: Using Helper Functions from Dependencies
+
+In this exercise, you will create a new chart and add the chart from Exercise 1 as a dependency.
+You will then use the helper function from the dependency in your new chart, demonstrating how shared helpers enable code reuse across multiple charts.
+
+Here, `helper-chart` acts as a _helper subchart_.
+It is still an ordinary application chart (`type: application` in its `Chart.yaml`) that you include as a subchart.
+Its named templates become available to `app-chart`, and its own resources (Deployment, Service, and so on) also render as part of `app-chart`.
+A true library chart sets `type: library` in its `Chart.yaml` and is limited to named templates and helpers, so Helm never renders it into Kubernetes resources and it cannot be installed on its own.
+
+=== Step 1: Create a New Chart
+
+Create a new Helm chart that will use the helper chart as a dependency:
+
+[source,powershell]
+----
+helm create app-chart
+----
+
+[source,bash]
+----
+helm create app-chart
+----
+
+=== Step 2: Package the Helper Chart
+
+First, package the helper chart so it can be used as a dependency.
+If you are using a local file path, you can reference it directly, or package it for distribution:
+
+[source,powershell]
+----
+helm package ./helper-chart
+----
+
+[source,bash]
+----
+helm package ./helper-chart
+----
+
+This creates a `helper-chart-0.1.0.tgz` file (assuming version 0.1.0 in Chart.yaml).
+
+=== Step 3: Add the Helper Chart as a Dependency
+
+Edit the `Chart.yaml` file in your `app-chart` directory to add the helper chart as a dependency:
+
+[source,powershell]
+----
+cd app-chart
+notepad Chart.yaml
+----
+
+[source,bash]
+----
+cd app-chart
+# open Chart.yaml in an editor, for example: vi Chart.yaml
+----
+
+Add a `dependencies` section to your `Chart.yaml`:
+
+[source,yaml]
+----
+dependencies:
+  - name: helper-chart
+    version: "0.1.0"
+    repository: "file://../helper-chart"
+----
+
+If you packaged the chart, you can also reference it from a local directory or OCI registry.
+
+=== Step 4: Update Dependencies
+
+Download the dependency into your chart:
+
+[source,powershell]
+----
+helm dependency update
+----
+
+[source,bash]
+----
+helm dependency update
+----
+
+This downloads the helper chart into the `charts/` directory and makes its template helpers available to your chart.
+
+=== Step 5: Use the Helper Function from the Dependency
+
+Change the Deployment in your `app-chart` so that it uses the helper function from the dependency.
+`helm create` already generated `deployment.yaml` in the `templates` directory; open it:
+
+[source,powershell]
+----
+cd templates
+notepad deployment.yaml
+----
+
+[source,bash]
+----
+cd templates
+# open deployment.yaml in an editor, for example: vi deployment.yaml
+----
+
+Replace the entire contents of `deployment.yaml` with the following, which uses the helper function from the dependency:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "app-chart.fullname" . }}
+  labels:
+{{ include "helper-chart.labels" . | indent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "app-chart.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+{{ include "helper-chart.labels" . | indent 8 }}
+    spec:
+      containers:
+      - name: {{ .Chart.Name }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+----
+
+Notice that this Deployment uses `helper-chart.labels` from the dependency, not from the current chart.
+The helper function is accessible because it is defined in a dependency.
+
+=== Step 6: Test the Chart with Dependency
+
+Render your chart to verify that the helper function from the dependency works correctly:
+
+[source,powershell]
+----
+cd ..\..
+helm template test-app ./app-chart
+----
+
+[source,bash]
+----
+cd ../..
+helm template test-app ./app-chart
+----
+
+Review the output to confirm that:
+
+* The Deployment is created with the correct name
+* The labels from the helper-chart dependency are properly applied
+* The helper function from the dependency is accessible and working
+
+You will also see resources whose `# Source:` comment starts with `app-chart/charts/helper-chart/templates/`.
+These come from the helper subchart itself: because `helper-chart` is an application chart, its own Deployment, Service, and other templates render alongside the resources of `app-chart`.
+A chart with `type: library` would contribute only its helpers and no resources.
+
+This demonstrates how a shared chart of helpers lets you reuse the same helper functions across multiple charts, creating consistency and eliminating duplication at an organizational level.
+
+== Exercise 3: Type Checking and Validation
+
+In this exercise, you will implement type checking to ensure that required values are defined and are of the correct type.
+You will use Helm template functions to validate that a value is defined as a string before using it in your templates.
+
+=== Step 1: Create a New Chart
+
+Create a new Helm chart for this exercise:
+
+[source,powershell]
+----
+helm create type-check-chart
+----
+
+[source,bash]
+----
+helm create type-check-chart
+----
+
+=== Step 2: Add Type Checking to a Template
+
+Navigate to the templates directory and edit the `deployment.yaml` file:
+
+[source,powershell]
+----
+cd type-check-chart\templates
+notepad deployment.yaml
+----
+
+[source,bash]
+----
+cd type-check-chart/templates
+vi deployment.yaml
+----
+
+Replace the entire contents of `deployment.yaml` with the following.
+The block at the top requires an `environment` value and checks that it is a string before anything else is rendered:
+
+[source,yaml]
+----
+{{- if not (kindIs "string" .Values.environment) }}
+{{- fail (printf "environment must be set to a string, got %s" (typeOf .Values.environment)) }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "type-check-chart.fullname" . }}
+  labels:
+    {{- include "type-check-chart.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "type-check-chart.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "type-check-chart.labels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: {{ .Chart.Name }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        env:
+        - name: ENVIRONMENT
+          value: {{ .Values.environment | quote }}
+----
+
+This is the standard validation pattern in Helm templates: an `if` block that calls `fail` only when the check does not pass.
+
+* `kindIs "string"` is true only when the value is a string. An unset value (`nil`) or a number such as `123` fails the check.
+* `fail` takes exactly one argument, the error message, so `printf` builds a message that includes the actual type reported by `typeOf`.
+* Because `fail` is inside the `if` block, it runs only when the check fails. When the value is a valid string, the block renders nothing.
+
+The default `values.yaml` does not define `environment` yet, so rendering the chart now stops with `environment must be set to a string, got <nil>`.
+You will add the value in Step 5.
+
+=== Step 3: Create a Helper Function for String Type Checking
+
+The inline check works, but repeating it for every value you want to validate duplicates the same logic in many places.
+Move the check into a helper function that validates a value is a string.
+Edit or create `_helpers.tpl`:
+
+[source,powershell]
+----
+notepad _helpers.tpl
+----
+
+[source,bash]
+----
+vi _helpers.tpl
+----
+
+Stay in the `type-check-chart/templates` directory (or from the project root, open `type-check-chart/templates/_helpers.tpl` in an editor). Then add a helper function that checks if a value is a string:
+
+[source,yaml]
+----
+{{- define "type-check-chart.requireString" -}}
+{{- if . -}}
+  {{- if eq (typeOf .) "string" -}}
+    {{- . -}}
+  {{- else -}}
+    {{- fail (printf "Value must be a string, got %s" (typeOf .)) -}}
+  {{- end -}}
+{{- else -}}
+  {{- fail "Value is required and must be a string" -}}
+{{- end -}}
+{{- end -}}
+----
+
+=== Step 4: Use the Type Checking Helper
+
+Replace the entire contents of `deployment.yaml` again, this time calling the helper function instead of the inline `if` block:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "type-check-chart.fullname" . }}
+  labels:
+    {{- include "type-check-chart.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "type-check-chart.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "type-check-chart.labels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: {{ .Chart.Name }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        env:
+        - name: ENVIRONMENT
+          value: {{ include "type-check-chart.requireString" .Values.environment | quote }}
+----
+
+=== Step 5: Test with Valid String Value
+
+First, test the chart with a valid string value.
+Edit `values.yaml`:
+
+[source,powershell]
+----
+cd ..
+notepad values.yaml
+----
+
+[source,bash]
+----
+cd ..
+# vi values.yaml   (or: nano, code, or your editor)
+----
+
+Add an environment value:
+
+[source,yaml]
+----
+environment: "production"
+----
+
+Render the chart to verify it works:
+
+[source,powershell]
+----
+cd ..
+helm template test-release ./type-check-chart
+----
+
+[source,bash]
+----
+cd ..
+helm template test-release ./type-check-chart
+----
+
+The chart should render successfully with the environment value set to "production".
+
+=== Step 6: Test Type Validation
+
+Now test that the type checking works by providing an invalid type.
+Modify `values.yaml` to use a non-string value:
+
+[source,yaml]
+----
+environment: 123
+----
+
+Attempt to render the chart:
+
+[source,powershell]
+----
+helm template test-release ./type-check-chart
+----
+
+[source,bash]
+----
+helm template test-release ./type-check-chart
+----
+
+The template should fail with an error message indicating that the value must be a string, demonstrating that your type checking is working correctly.
+
+This exercise demonstrates how to implement type checking in Helm templates, ensuring that values meet your requirements before they are used in your Kubernetes resources.
+
+== Exercise 4: Creating Resources from Array Combinations
+
+In this exercise, you will use nested loops to create a ConfigMap for each possible combination of two arrays.
+This demonstrates how to use `range` to iterate over multiple arrays and generate resources dynamically.
+
+=== Step 1: Create a New Chart
+
+Create a new Helm chart for this exercise:
+
+[source,powershell]
+----
+helm create combination-chart
+----
+
+[source,bash]
+----
+helm create combination-chart
+----
+
+=== Step 2: Define Arrays in Values
+
+Edit the `values.yaml` file to define two arrays that will be combined:
+
+[source,powershell]
+----
+cd combination-chart
+notepad values.yaml
+----
+
+[source,bash]
+----
+cd combination-chart
+# edit values.yaml in an editor, for example: vi values.yaml, nano,
+# or: code values.yaml
+----
+
+Add two arrays to your values file:
+
+[source,yaml]
+----
+environments:
+  - name: development
+    region: us-east-1
+  - name: staging
+    region: us-west-2
+  - name: production
+    region: eu-central-1
+
+configurations:
+  - type: standard
+    replicas: 2
+  - type: high-availability
+    replicas: 5
+----
+
+This defines two arrays: `environments` and `configurations`.
+We will create a ConfigMap for each combination of environment and configuration.
+
+=== Step 3: Create a Template with Nested Loops
+
+Navigate to the templates directory and create a template that generates ConfigMaps for each combination:
+
+[source,powershell]
+----
+cd templates
+New-Item -Path "configmaps.yaml" -ItemType File
+----
+
+[source,bash]
+----
+cd templates
+touch configmaps.yaml
+----
+
+Add content that uses nested `range` loops to create a ConfigMap for each combination:
+
+[source,yaml]
+----
+{{- range $env := .Values.environments }}
+{{- range $config := $.Values.configurations }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $.Release.Name }}-{{ $env.name }}-{{ $config.type }}-config
+  labels:
+    environment: {{ $env.name }}
+    region: {{ $env.region }}
+    config-type: {{ $config.type }}
+    app.kubernetes.io/name: {{ include "combination-chart.name" $ }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+data:
+  environment: {{ $env.name | quote }}
+  region: {{ $env.region | quote }}
+  config-type: {{ $config.type | quote }}
+  replicas: {{ $config.replicas | quote }}
+{{- end }}
+{{- end }}
+----
+
+This template uses nested `range` loops:
+
+* The outer loop iterates over `environments`
+* The inner loop iterates over `configurations`
+* For each combination, it creates a ConfigMap with a unique name and data
+
+Note the use of `$` to access the root context when inside nested loops.
+
+=== Step 4: Test the Template
+
+Render the chart to see all the ConfigMaps that are created:
+
+[source,powershell]
+----
+cd ..\..
+helm template test-release ./combination-chart
+----
+
+[source,bash]
+----
+cd ../..
+helm template test-release ./combination-chart
+----
+
+Review the output to verify that:
+
+* A ConfigMap is created for each combination of environment and configuration
+* Each ConfigMap has a unique name combining the environment name and configuration type
+* The data in each ConfigMap reflects the values from both arrays
+* You should see 6 ConfigMaps total (3 environments × 2 configurations)
+
+=== Step 5: Verify the Combinations
+
+Count the ConfigMaps in the output to confirm all combinations are created:
+
+[source,powershell]
+----
+helm template test-release ./combination-chart |
+  Select-String -Pattern "kind: ConfigMap" |
+  Measure-Object
+----
+
+[source,bash]
+----
+helm template test-release ./combination-chart |
+  grep -c "kind: ConfigMap"
+----
+
+You should see 6 ConfigMaps, one for each combination:
+
+* development-standard
+* development-high-availability
+* staging-standard
+* staging-high-availability
+* production-standard
+* production-high-availability
+
+This exercise demonstrates how to use nested loops in Helm templates to generate multiple resources from array combinations, enabling you to create complex deployment scenarios efficiently.
+

@@ -1,0 +1,704 @@
+= Exercises
+:hardbreaks-option:
+
+NOTE: The exercises use `quay.io/nginx/nginx-unprivileged`, an NGINX image that runs as a non-root user and listens on port 8080. The `nginx` image from Docker Hub cannot start under OpenShift's default `restricted-v2` security context constraint. Exercise 3 uses `quay.io/sclorg/redis-7-c9s`, a CentOS Stream Redis 7 image that runs as an arbitrary non-root user and listens on port 6379. Both images come from Quay.io, which avoids Docker Hub pull rate limits.
+
+== Exercise 1: Node Selectors and Node Affinity
+
+In this exercise, you will practice using node selectors and node affinity to control pod placement.
+
+=== Step 1: Examine Node Labels
+
+First, let's see what labels are available on your cluster nodes:
+
+[source,bash]
+----
+# View all nodes and their labels
+oc get nodes --show-labels
+
+# Get detailed information about a specific node
+oc describe node <node-name>
+----
+
+=== Step 2: Create a Pod with Node Selector
+
+Create a pod that uses a node selector to target a specific node:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: node-selector-pod
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: <node-name>
+  containers:
+  - name: nginx
+    image: quay.io/nginx/nginx-unprivileged:latest
+----
+
+Apply the pod and verify it's scheduled on the correct node:
+
+[source,bash]
+----
+oc apply -f node-selector-pod.yaml
+oc get pod node-selector-pod -o wide
+----
+
+=== Step 3: Use Node Affinity
+
+Create a pod with node affinity rules that are more flexible than node selectors:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: node-affinity-pod
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubernetes.io/arch
+            operator: In
+            values:
+            - amd64
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+          - key: node-role.kubernetes.io/worker
+            operator: Exists
+  containers:
+  - name: nginx
+    image: quay.io/nginx/nginx-unprivileged:latest
+----
+
+Apply and verify the pod placement:
+
+[source,bash]
+----
+oc apply -f node-affinity-pod.yaml
+oc get pod node-affinity-pod -o wide
+oc describe pod node-affinity-pod
+----
+
+=== Step 4: Clean Up
+
+Remove the test pods:
+
+[source,bash]
+----
+oc delete pod node-selector-pod node-affinity-pod
+----
+
+== Exercise 2: Taints and Tolerations
+
+Practice using taints and tolerations to control which pods can run on specific nodes.
+
+=== Step 1: Add a Taint to a Node
+
+NOTE: Adding taints to nodes requires elevated privileges. Please wait for your instructor to add the taint before proceeding.
+
+The instructor will add a taint to prevent regular pods from being scheduled on a node:
+
+[source,bash]
+----
+# Add a taint to a node
+# (requires elevated privileges - instructor will run this)
+oc adm taint nodes <node-name> special-workload=true:NoSchedule
+
+# Verify the taint
+oc describe node <node-name> | grep Taint
+----
+
+After the instructor has added the taint, verify it exists using the second command above. The pods in the next steps use the name of the tainted node.
+
+=== Step 2: Attempt to Schedule a Regular Pod
+
+Try to create a pod without a toleration. Replace `<node-name>` with the name of the tainted node, so that the pod can only be placed on that node:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: regular-pod
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: <node-name>
+  containers:
+  - name: nginx
+    image: quay.io/nginx/nginx-unprivileged:latest
+----
+
+[source,bash]
+----
+oc apply -f regular-pod.yaml
+oc get pod regular-pod
+oc describe pod regular-pod
+----
+
+Observe that the pod remains in `Pending` state: the only node its `nodeSelector` allows has a taint that the pod does not tolerate. The `FailedScheduling` event reports `1 node(s) had untolerated taint(s)`.
+
+=== Step 3: Create a Pod with Toleration
+
+Create a pod that tolerates the taint, pinned to the same node:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tolerated-pod
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: <node-name>
+  tolerations:
+  - key: "special-workload"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+  containers:
+  - name: nginx
+    image: quay.io/nginx/nginx-unprivileged:latest
+----
+
+[source,bash]
+----
+oc apply -f tolerated-pod.yaml
+oc get pod tolerated-pod -o wide
+----
+
+Verify that this pod is scheduled on the tainted node. The toleration only allows the pod to run on the tainted node; it does not attract the pod to it. Without the `nodeSelector`, the scheduler could place this pod on any node.
+
+=== Step 4: Remove the Taint
+
+NOTE: Removing taints from nodes requires elevated privileges. Please ask your instructor to remove the taint when you're finished with this exercise.
+
+The instructor will remove the taint:
+
+[source,bash]
+----
+# Remove the taint
+# (requires elevated privileges - instructor will run this)
+oc adm taint nodes <node-name> special-workload=true:NoSchedule-
+
+# Clean up your test pods
+oc delete pod regular-pod tolerated-pod
+----
+
+== Exercise 3: Pod Affinity and Anti-Affinity
+
+Practice using pod affinity and anti-affinity to control pod placement relative to other pods.
+
+=== Step 1: Create a Deployment with Pod Anti-Affinity
+
+Create a deployment that spreads pods across different nodes:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deployment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - web
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: nginx
+        image: quay.io/nginx/nginx-unprivileged:latest
+----
+
+[source,bash]
+----
+oc apply -f web-deployment.yaml
+oc get pods \
+  -l app=web \
+  -o wide
+----
+
+Verify that pods are spread across different nodes.
+
+=== Step 2: Create a Pod with Pod Affinity
+
+Create a pod that prefers to be scheduled on the same node as the web pods:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cache-pod
+  labels:
+    app: cache
+spec:
+  affinity:
+    podAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app
+              operator: In
+              values:
+              - web
+          topologyKey: kubernetes.io/hostname
+  containers:
+  - name: redis
+    image: quay.io/sclorg/redis-7-c9s:latest
+    ports:
+    - containerPort: 6379
+----
+
+[source,bash]
+----
+oc apply -f cache-pod.yaml
+oc get pod cache-pod -o wide
+oc describe pod cache-pod
+----
+
+Check which node the cache pod was scheduled on and verify it's on the same node as at least one web pod.
+
+=== Step 3: Clean Up
+
+[source,bash]
+----
+oc delete deployment web-deployment
+oc delete pod cache-pod
+----
+
+== Exercise 4: Topology Spread Constraints
+
+Practice using topology spread constraints to control pod distribution with skew values.
+
+=== Step 1: Create a Deployment with Topology Spread
+
+Create a deployment with topology spread constraints:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spread-deployment
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: spread
+  template:
+    metadata:
+      labels:
+        app: spread
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        nodeTaintsPolicy: Honor
+        labelSelector:
+          matchLabels:
+            app: spread
+      containers:
+      - name: nginx
+        image: quay.io/nginx/nginx-unprivileged:latest
+----
+
+`nodeTaintsPolicy: Honor` leaves nodes whose taints the pod does not tolerate, such as tainted control-plane nodes, out of the skew calculation. Without it, those nodes count as domains with zero pods, and most replicas stay `Pending`.
+
+[source,bash]
+----
+oc apply -f spread-deployment.yaml
+oc get pods \
+  -l app=spread \
+  -o wide
+----
+
+=== Step 2: Analyze Pod Distribution
+
+Count how many pods are on each node:
+
+[source,bash]
+----
+oc get pods \
+  -l app=spread \
+  -o custom-columns=NODE:.spec.nodeName \
+  --no-headers | sort | uniq -c
+----
+
+Verify that the distribution respects the maxSkew value of 1.
+
+=== Step 3: Experiment with Different Skew Values
+
+Scale the deployment and observe how different skew values affect distribution:
+
+[source,bash]
+----
+# Scale to 10 replicas
+oc scale deployment spread-deployment --replicas=10
+
+# Check distribution
+oc get pods \
+  -l app=spread \
+  -o custom-columns=NODE:.spec.nodeName \
+  --no-headers | sort | uniq -c
+----
+
+Update the deployment to use maxSkew: 2 and observe the difference:
+
+[source,bash]
+----
+# Edit the deployment
+oc edit deployment spread-deployment
+# Change maxSkew from 1 to 2
+----
+
+[source,bash]
+----
+# Check the new distribution
+oc get pods \
+  -l app=spread \
+  -o custom-columns=NODE:.spec.nodeName \
+  --no-headers | sort | uniq -c
+----
+
+=== Step 4: Clean Up
+
+[source,bash]
+----
+oc delete deployment spread-deployment
+----
+
+== Exercise 5: Node Feature Discovery Labels
+
+Practice using Node Feature Discovery labels to schedule pods on nodes with specific hardware features.
+
+=== Step 1: View NFD Labels
+
+Examine the Node Feature Discovery labels on your nodes:
+
+[source,bash]
+----
+# View all labels including NFD labels
+oc get nodes --show-labels | grep feature.node.kubernetes.io
+
+# Get detailed NFD labels for a specific node
+oc describe node <node-name> | grep feature.node.kubernetes.io
+----
+
+=== Step 2: Create a Pod Using NFD Labels
+
+Create a pod that uses NFD labels in a node selector:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nfd-pod
+spec:
+  nodeSelector:
+    feature.node.kubernetes.io/cpu-cpuid.AVX: "true"
+  containers:
+  - name: app
+    image: quay.io/nginx/nginx-unprivileged:latest
+----
+
+[source,bash]
+----
+oc apply -f nfd-pod.yaml
+oc get pod nfd-pod -o wide
+oc describe pod nfd-pod
+----
+
+=== Step 3: Use NFD Labels with Node Affinity
+
+Create a pod using NFD labels with node affinity for more flexibility:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nfd-affinity-pod
+spec:
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+          - key: feature.node.kubernetes.io/cpu-cpuid.AVX2
+            operator: In
+            values:
+            - "true"
+  containers:
+  - name: app
+    image: quay.io/nginx/nginx-unprivileged:latest
+----
+
+[source,bash]
+----
+oc apply -f nfd-affinity-pod.yaml
+oc get pod nfd-affinity-pod -o wide
+----
+
+=== Step 4: Clean Up
+
+[source,bash]
+----
+oc delete pod nfd-pod nfd-affinity-pod
+----
+
+== Exercise 6: Resource Requirements and Scheduling
+
+Practice setting resource requests and limits and observe their impact on scheduling.
+
+=== Step 1: Check Node Resources
+
+Examine available resources on your nodes:
+
+[source,bash]
+----
+# View node resource capacity and allocatable
+oc describe nodes | grep -A 5 "Allocated resources"
+
+# View the CPU and memory each node can allocate to pods
+oc get nodes \
+  -o custom-columns=NAME:.metadata.name,CPU:.status.allocatable.cpu,MEMORY:.status.allocatable.memory
+
+# Get resource usage summary
+oc adm top nodes
+----
+
+=== Step 2: Create Pods with Resource Requests
+
+Create a pod with specific resource requests:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: resource-pod
+spec:
+  containers:
+  - name: app
+    image: quay.io/nginx/nginx-unprivileged:latest
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+----
+
+[source,bash]
+----
+oc apply -f resource-pod.yaml
+oc get pod resource-pod -o wide
+oc describe pod resource-pod
+----
+
+=== Step 3: Create Multiple Pods and Observe Scheduling
+
+Create several pods with resource requirements and observe how they're distributed:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: resource-deployment
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: resource-app
+  template:
+    metadata:
+      labels:
+        app: resource-app
+    spec:
+      containers:
+      - name: app
+        image: quay.io/nginx/nginx-unprivileged:latest
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+----
+
+[source,bash]
+----
+oc apply -f resource-deployment.yaml
+oc get pods \
+  -l app=resource-app \
+  -o wide
+
+oc adm top nodes
+----
+
+Observe how the scheduler distributes pods based on available resources.
+
+=== Step 4: Attempt to Overcommit Resources
+
+Try to create a pod that requests more resources than available:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: overcommit-pod
+spec:
+  containers:
+  - name: app
+    image: quay.io/nginx/nginx-unprivileged:latest
+    resources:
+      requests:
+        memory: "1000Gi"
+        cpu: "1000"
+----
+
+[source,bash]
+----
+oc apply -f overcommit-pod.yaml
+oc get pod overcommit-pod
+oc describe pod overcommit-pod
+----
+
+Observe that the pod remains in `Pending` state due to insufficient resources.
+
+=== Step 5: Clean Up
+
+[source,bash]
+----
+oc delete pod resource-pod overcommit-pod
+oc delete deployment resource-deployment
+----
+
+== Exercise 7: Secondary Scheduler
+
+Practice using a secondary scheduler for pod scheduling.
+
+=== Step 1: Verify Available Schedulers
+
+Check what schedulers are available in your cluster. On OpenShift, the default scheduler runs in the `openshift-kube-scheduler` namespace, and the Secondary Scheduler Operator runs secondary schedulers in `openshift-secondary-scheduler-operator`:
+
+NOTE: The workshop's attendee role lets you list pods in these namespaces, but reading their config maps requires elevated privileges. If you get a `Forbidden` error, ask your instructor to show you the output.
+
+[source,bash]
+----
+# List scheduler pods
+oc get pods \
+  -n openshift-kube-scheduler \
+  -l app=openshift-kube-scheduler
+
+oc get pods \
+  -n openshift-secondary-scheduler-operator \
+  -l app=secondary-scheduler
+
+# Check scheduler configurations
+oc get configmap config \
+  -n openshift-kube-scheduler \
+  -o yaml
+
+oc get configmap -n openshift-secondary-scheduler-operator
+----
+
+=== Step 2: Create a Pod with Secondary Scheduler
+
+Create a pod that specifies a secondary scheduler name:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secondary-scheduled-pod
+spec:
+  schedulerName: my-custom-scheduler
+  containers:
+  - name: app
+    image: quay.io/nginx/nginx-unprivileged:latest
+----
+
+[source,bash]
+----
+oc apply -f secondary-scheduled-pod.yaml
+oc get pod secondary-scheduled-pod
+oc describe pod secondary-scheduled-pod
+----
+
+Note: If the secondary scheduler doesn't exist, the pod will remain in `Pending` state. Check the events and notice that no scheduling events are recorded, because no scheduler picks up the pod.
+
+=== Step 3: Use Default Scheduler
+
+Create the same pod without specifying a scheduler name (uses default):
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: default-scheduled-pod
+spec:
+  containers:
+  - name: app
+    image: quay.io/nginx/nginx-unprivileged:latest
+----
+
+[source,bash]
+----
+oc apply -f default-scheduled-pod.yaml
+oc get pod default-scheduled-pod -o wide
+oc describe pod default-scheduled-pod | grep -i scheduler
+----
+
+=== Step 4: Verify Scheduler Assignment
+
+Check which scheduler handled each pod:
+
+[source,bash]
+----
+# Check scheduler name in pod spec
+oc get pod secondary-scheduled-pod -o jsonpath='{.spec.schedulerName}'
+oc get pod default-scheduled-pod -o jsonpath='{.spec.schedulerName}'
+----
+
+=== Step 5: Clean Up
+
+[source,bash]
+----
+oc delete pod secondary-scheduled-pod default-scheduled-pod
+----
+

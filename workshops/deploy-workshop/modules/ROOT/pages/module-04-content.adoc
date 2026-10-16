@@ -1,0 +1,418 @@
+= Image Distribution and Optimization
+:hardbreaks-option:
+
+NOTE: This module covers mostly administrator operations and is provided for informational purposes. Many of the configurations and operations described require cluster administrator privileges and should not be executed by regular users. The content is intended to help you understand how image management works in OpenShift, but you should consult with your cluster administrator for actual implementation.
+
+Efficient image distribution and management are critical for optimized deployments in OpenShift. This module explores how image placement and image distribution mechanisms impact deployment performance, resource utilization, and application availability. Understanding these concepts helps ensure fast pod startup times and efficient cluster resource usage.
+
+== Why Image Management Matters
+
+Image distribution and placement directly impact several critical aspects of cluster operations:
+
+=== Deployment Speed
+
+Fast image pulls are essential for rapid application deployment and scaling. When images are already cached on nodes, pods can start immediately without waiting for network transfers. This is especially important for:
+
+* Horizontal scaling operations where multiple pods need to start simultaneously
+* Rolling updates that require new pod instances
+* Disaster recovery scenarios requiring rapid pod recreation
+* Auto-scaling events that need immediate capacity
+
+=== Network Bandwidth
+
+Efficient image distribution reduces network congestion and bandwidth costs:
+
+* Pre-pulled images eliminate repeated downloads of the same image
+* Image caching reduces registry load and network traffic
+* Strategic image placement minimizes cross-zone or cross-region transfers
+* Reduced bandwidth usage lowers infrastructure costs
+
+=== Resource Utilization
+
+Proper image management optimizes cluster resources:
+
+* Node disk space is used efficiently through image garbage collection
+* CPU and memory are preserved by avoiding unnecessary image pulls
+* Network resources are conserved for application traffic
+* Storage costs are minimized through effective image lifecycle management
+
+=== Application Availability
+
+Image availability directly affects application reliability:
+
+* Image pull failures can prevent pods from starting
+* Network issues can delay or block deployments
+* Registry outages can impact application updates
+* Image placement strategies ensure images are available when needed
+
+== Image Pull Configuration
+
+Control how images are pulled and authenticated in your cluster.
+
+=== Image Pull Policies
+
+Control how images are pulled at the pod level:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mypod
+spec:
+  containers:
+  - name: app
+    image: myapp:latest
+    imagePullPolicy: Always
+----
+
+Available policies:
+
+* **Always**: Always pull the image, even if it exists locally
+* **IfNotPresent**: Only pull if the image doesn't exist locally (default for tags other than `latest`)
+* **Never**: Never pull the image; it must exist locally
+
+=== Image Pull Secrets
+
+Configure authentication for private registries:
+
+[source,bash]
+----
+# Create an image pull secret
+oc create secret docker-registry myregistrykey \
+  --docker-server=registry.example.com \
+  --docker-username=myuser \
+  --docker-password=mypassword \
+  --docker-email=myuser@example.com
+
+# Link secret to service account
+oc secrets link default myregistrykey --for=pull
+----
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: private-image-pod
+spec:
+  imagePullSecrets:
+  - name: myregistrykey
+  containers:
+  - name: app
+    image: registry.example.com/private/app:latest
+----
+
+== Image Placement and Distribution
+
+Strategic image placement ensures images are available where and when they're needed.
+
+=== Node Image Caching
+
+OpenShift caches images on nodes to speed up subsequent deployments:
+
+[source,bash]
+----
+# View images on a node (requires node access)
+oc debug node/<node-name> -- chroot /host crictl images
+
+# Check image cache usage
+oc debug node/<node-name> -- chroot /host df -h /var/lib/containers
+----
+
+Image caching provides:
+
+* Faster pod startup times
+* Reduced network bandwidth usage
+* Lower registry load
+* Improved deployment reliability
+
+=== Image Garbage Collection
+
+OpenShift automatically manages image storage through garbage collection:
+
+[source,bash]
+----
+# View kubelet configuration for image GC
+oc get kubeletconfig -o yaml
+
+# Check node disk usage for images
+# (oc adm top nodes shows only CPU and memory)
+oc debug node/<node-name> -- chroot /host df -h /var/lib/containers
+----
+
+Garbage collection settings control:
+
+* When images are removed from nodes
+* Disk usage thresholds that trigger cleanup
+* Minimum age before images can be garbage collected
+
+=== Image Distribution Strategies
+
+Different strategies optimize image distribution:
+
+==== Pre-pulling Images
+
+Pre-pull critical images before they're needed:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: image-prepull
+spec:
+  selector:
+    matchLabels:
+      name: image-prepull
+  template:
+    metadata:
+      labels:
+        name: image-prepull
+    spec:
+      initContainers:
+      - name: prepull
+        image: registry.example.com/myapp:v1.2.3
+        command: ["echo", "Image pre-pulled"]
+      containers:
+      - name: pause
+        image: registry.k8s.io/pause:3.1
+----
+
+== Image Puller
+
+The Image Puller operator provides a simpler way to manage pre-pulling images across cluster nodes. While you can manually create DaemonSets to pre-pull images, the Image Puller operator makes it simpler to maintain multiple images and ensures images are available before workloads need them.
+
+=== How Image Puller Works
+
+The Image Puller runs as a DaemonSet with one pod per node. Each pod:
+
+1. **Pulls Specified Images**: Downloads images listed in the configuration
+2. **Caches on Node**: Stores images in the node's image cache
+3. **Maintains Availability**: Keeps images available for pod scheduling
+4. **Updates Automatically**: Can be configured to pull updated images
+
+=== Image Puller Configuration
+
+Configure the Image Puller through a custom resource:
+
+[source,yaml]
+----
+apiVersion: che.eclipse.org/v1alpha1
+kind: KubernetesImagePuller
+metadata:
+  name: cluster-image-puller
+  namespace: openshift-image-puller
+spec:
+  images: "myapp=registry.example.com/myapp:v1.2.3;nginx=registry.example.com/nginx:latest"
+  nodeSelector: '{"node-role.kubernetes.io/worker": ""}'
+----
+
+Configuration options:
+
+* **images**: Semicolon-separated string of `name=image` pairs to pre-pull
+* **nodeSelector**: Which nodes should pull images (a JSON-encoded string)
+
+=== Viewing Image Puller Status
+
+Monitor the Image Puller to ensure images are being pulled:
+
+[source,bash]
+----
+# View Image Puller custom resource
+oc get kubernetesimagepuller -n openshift-image-puller
+
+# View Image Puller DaemonSet
+oc get daemonset -n openshift-image-puller
+
+# View Image Puller pods
+oc get pods -n openshift-image-puller
+
+# View Image Puller logs
+oc logs \
+  -n openshift-image-puller \
+  -l app=kubernetes-image-puller \
+  --tail=50
+----
+
+=== Image Puller Benefits
+
+Using the Image Puller provides several advantages:
+
+* **Faster Deployments**: Images are already cached when pods need them
+* **Reduced Network Congestion**: Images are pulled during off-peak times
+* **Improved Reliability**: Images are verified before workloads need them
+* **Predictable Performance**: Eliminates variable image pull times
+* **Cost Optimization**: Reduces bandwidth costs by pulling during low-traffic periods
+
+=== Image Puller Best Practices
+
+* Pre-pull only critical images that are frequently used
+* Use specific image tags rather than `latest` for predictability
+* Configure appropriate pull policies based on update frequency
+* Monitor Image Puller pods to ensure successful pulls
+* Update image lists when new versions are released
+* Use node selectors to target specific node types
+* Consider image sizes and node storage capacity
+
+=== Image Puller and Deployment Optimization
+
+The Image Puller directly supports optimized deployments by:
+
+* **Eliminating Pull Delays**: Pods start immediately without waiting for image downloads
+* **Supporting Rapid Scaling**: Multiple pods can start simultaneously with cached images
+* **Enabling Fast Rollbacks**: Previous image versions remain cached
+* **Reducing Deployment Failures**: Images are verified before deployment
+* **Improving User Experience**: Applications become available faster
+
+==== Registry Mirrors
+
+Use registry mirrors to reduce latency:
+
+[source,yaml]
+----
+apiVersion: config.openshift.io/v1
+kind: ImageTagMirrorSet
+metadata:
+  name: registry-mirror
+spec:
+  imageTagMirrors:
+  - source: registry.example.com
+    mirrors:
+    - mirror.example.com
+----
+
+An `ImageTagMirrorSet` applies to images pulled by tag. For images pulled by digest, use an `ImageDigestMirrorSet` with `imageDigestMirrors` in the same format. Both are cluster-wide resources that OpenShift applies to every node, so you do not need a `MachineConfig` to configure mirrors.
+
+=== Lean Base Images
+
+Using lean, optimized base images significantly improves deployment performance and resource utilization. Lean base images are minimal container images that contain only the essential components needed to run applications.
+
+==== Benefits of Lean Base Images
+
+Lean base images provide several advantages:
+
+* **Faster Image Pulls**: Smaller images download faster, reducing deployment time
+* **Reduced Storage Usage**: Less disk space required on nodes
+* **Lower Security Surface**: Fewer components mean fewer potential vulnerabilities
+* **Faster Container Startup**: Minimal images start containers more quickly
+* **Reduced Network Bandwidth**: Smaller images consume less bandwidth during pulls
+* **Better Cache Efficiency**: Smaller images improve layer caching effectiveness
+
+==== Internal Team Base Images
+
+Many organizations provide standardized base images through internal teams. These images offer:
+
+* **Security Hardening**: Pre-configured with security best practices
+* **Compliance**: Built to meet organizational compliance requirements
+* **Standardization**: Consistent base images across all applications
+* **Maintenance**: Regularly updated and patched by dedicated teams
+* **Optimization**: Optimized for your specific infrastructure and use cases
+* **Support**: Internal support and documentation
+
+
+==== Choosing Base Images
+
+When selecting base images, consider:
+
+* **Size**: Prefer minimal images (Alpine, distroless, or internal lean images)
+* **Security**: Use images from trusted sources with regular security updates
+* **Compatibility**: Ensure base images are compatible with your application requirements
+* **Maintenance**: Choose images with active maintenance and support
+* **Internal Options**: Prefer internal team-provided images when available
+
+==== Image Size Impact
+
+Image size directly affects deployment performance:
+
+[source,bash]
+----
+# Compare image sizes
+oc image info registry.example.com/myapp:latest | grep -i size
+oc image info registry.example.com/ubi9/ubi:latest | grep -i size
+----
+
+A lean base image (50-100MB) compared to a full OS image (500MB-1GB) can:
+
+* Reduce pull time by 80-90%
+* Decrease storage requirements by 80-90%
+* Improve cache hit rates
+* Enable faster scaling operations
+
+==== Multi-stage Builds for Lean Images
+
+Use multi-stage builds to create lean production images:
+
+[source,dockerfile]
+----
+# Build stage with full toolchain
+FROM registry.example.com/build-tools:latest AS builder
+WORKDIR /build
+COPY . .
+RUN make build
+
+# Production stage with lean base image
+FROM alpine:latest
+WORKDIR /app
+COPY --from=builder /build/bin/app /app/app
+USER 1001
+CMD ["/app/app"]
+----
+
+This approach:
+
+* Keeps build tools out of production images
+* Uses lean base images for runtime
+* Minimizes final image size
+* Reduces security exposure
+
+==== Best Practices for Lean Images
+
+* Use internal team-provided base images when available
+* Prefer minimal base images (Alpine, distroless, or internal equivalents)
+* Remove unnecessary packages and files
+* Use multi-stage builds to separate build and runtime environments
+* Regularly update base images to include security patches
+* Document which base images are approved for use
+* Monitor image sizes and optimize continuously
+
+== Monitoring Image Distribution
+
+Monitor image-related metrics to optimize distribution:
+
+[source,bash]
+----
+# View image pull events
+oc get events --field-selector reason=Failed
+
+# Check pod image pull status
+oc describe pod <pod-name> | grep -i image
+
+# Monitor node image cache usage
+oc debug node/<node-name> -- chroot /host df -h /var/lib/containers
+----
+
+Key metrics to monitor:
+
+* Image pull success/failure rates
+* Image pull duration
+* Node image cache utilization
+* Registry request rates
+* Image garbage collection frequency
+
+== Best Practices
+
+* Use lean base images, especially those provided by internal teams
+* Prefer minimal base images (Alpine, distroless, or internal equivalents) over full OS images
+* Pre-pull critical images using Image Puller
+* Use specific image tags instead of `latest` for production
+* Monitor image pull performance and failures
+* Configure appropriate image pull policies
+* Implement image pull secrets for private registries
+* Use multi-stage builds to create lean production images
+* Regularly review and update image lists
+* Monitor node disk usage and image cache
+* Test image distribution strategies in non-production first
+* Use registry mirrors for reduced latency
+* Configure image garbage collection thresholds appropriately
+* Document approved base images and image sources

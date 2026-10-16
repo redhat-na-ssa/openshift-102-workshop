@@ -1,0 +1,29 @@
+= Home
+
+This Helm workshop is designed to help you make better use of Helm in your Kubernetes deployments.
+
+ifdef::openshift-102-showroom[]
+include::openshift-102:ROOT:partial$cli-tools-container.adoc[]
+endif::[]
+
+== Prerequisites
+
+This workshop assumes the following:
+
+* You have basic familiarity with what Helm is and what it does.
+* You have experience running a Helm chart in your own Kubernetes cluster.
+
+If you are new to Helm, we recommend reviewing the https://helm.sh/docs/[official Helm documentation] before proceeding.
+
+The CLIs, cluster access, and registry the exercises need are listed in xref:setup-requirements.adoc[Setup Requirements].
+Instructors preparing a lab environment should start there.
+
+== Expectations
+
+After completing this workshop, you will be able to:
+
+* Create and install a Helm chart.
+
+* Perform basic and advanced templating of resources.
+
+* Package a Helm chart as a set of files or an OCI artifact.

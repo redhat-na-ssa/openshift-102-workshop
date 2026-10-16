@@ -1,0 +1,623 @@
+= Advanced Pod Scheduling
+:hardbreaks-option:
+
+This module covers advanced scheduling mechanisms that allow fine-grained control over pod placement and resource allocation in your cluster. Pod priority and preemption are covered in Module 1.
+
+== Node Selection Methods
+
+Kubernetes provides several mechanisms to influence where pods are scheduled:
+
+=== Node Selectors
+
+Node selectors are the simplest way to constrain pod placement. They require nodes to have specific labels:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-pod
+spec:
+  nodeSelector:
+    disktype: ssd
+    zone: us-west-1
+  containers:
+  - name: nginx
+    image: quay.io/nginx/nginx-unprivileged:latest
+----
+
+=== Node Affinity
+
+Node affinity provides more flexible scheduling rules than node selectors. It supports both required and preferred rules:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-pod
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: zone
+            operator: In
+            values:
+            - us-west-1
+            - us-west-2
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+          - key: disktype
+            operator: In
+            values:
+            - ssd
+  containers:
+  - name: nginx
+    image: quay.io/nginx/nginx-unprivileged:latest
+----
+
+The `requiredDuringSchedulingIgnoredDuringExecution` rule must be satisfied for the pod to be scheduled. The `preferredDuringSchedulingIgnoredDuringExecution` rule is a preference that influences scoring but doesn't prevent scheduling.
+
+=== Taints and Tolerations
+
+Taints allow nodes to repel pods that don't have matching tolerations. This is useful for reserving nodes for specific workloads:
+
+[source,bash]
+----
+# Add a taint to a node
+oc adm taint nodes node1 key=value:NoSchedule
+
+# Pods must have a matching toleration
+----
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-pod
+spec:
+  tolerations:
+  - key: "key"
+    operator: "Equal"
+    value: "value"
+    effect: "NoSchedule"
+  containers:
+  - name: nginx
+    image: quay.io/nginx/nginx-unprivileged:latest
+----
+
+Taint effects include:
+
+* `NoSchedule`: Pods without toleration cannot be scheduled
+* `PreferNoSchedule`: Scheduler tries to avoid the node but doesn't guarantee it
+* `NoExecute`: Existing pods without toleration are evicted
+
+=== Node Feature Discovery
+
+Node Feature Discovery (NFD) automatically detects hardware features and capabilities on cluster nodes and labels them accordingly. This enables you to schedule workloads on nodes with specific hardware features such as GPUs, specialized CPUs, or other accelerators.
+
+NFD runs as a DaemonSet, with one pod per node that discovers and labels node features. Common features detected include:
+
+* CPU features (AVX, SSE, specific instruction sets)
+* Hardware accelerators (GPUs, FPGAs, specialized processors)
+* Kernel features and modules
+* PCI devices
+* System topology information
+
+==== How NFD Works
+
+NFD consists of two main components:
+
+* **Node Feature Discovery Master**: Runs as a Deployment, manages feature discovery and labeling
+* **Node Feature Discovery Worker**: Runs as a DaemonSet, discovers features on each node and reports them
+
+The worker discovers features using source plugins:
+
+* **CPU plugin**: Detects CPU features and capabilities
+* **Kernel plugin**: Discovers kernel features and loaded modules
+* **PCI plugin**: Identifies PCI devices
+* **System plugin**: Detects system-level features
+* **Custom plugins**: Allow custom feature detection logic
+
+==== Viewing Discovered Features
+
+You can view the labels that NFD creates on nodes:
+
+[source,bash]
+----
+# View all node labels including NFD labels
+oc get nodes --show-labels
+
+# View specific node with NFD labels
+oc describe node <node-name>
+
+# Filter for NFD-specific labels
+oc get nodes -o json |
+  jq '.items[].metadata.labels |
+    with_entries(select(.key |
+      startswith("feature.node.kubernetes.io")))'
+----
+
+NFD labels follow the pattern `feature.node.kubernetes.io/<feature-name>=<value>`.
+
+==== Using NFD Labels for Scheduling
+
+Once nodes are labeled with their features, you can use these labels in node selectors or node affinity rules:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-workload
+spec:
+  nodeSelector:
+    feature.node.kubernetes.io/cpu-cpuid.AVX512F: "true"
+    feature.node.kubernetes.io/pci-0300_10de.present: "true"
+  containers:
+  - name: gpu-app
+    image: nvidia/cuda:latest
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+----
+
+Or using node affinity for more flexible matching:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: optimized-workload
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: feature.node.kubernetes.io/cpu-cpuid.AVX2
+            operator: In
+            values:
+            - "true"
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+          - key: feature.node.kubernetes.io/kernel-version.major
+            operator: Gt
+            values:
+            - "5"
+  containers:
+  - name: app
+    image: myapp:latest
+----
+
+==== Custom Feature Sources
+
+You can extend NFD with custom feature sources to detect application-specific features:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nfd-worker-config
+  namespace: openshift-nfd
+data:
+  custom-source.conf: |
+    - name: "my-custom-feature"
+      matchOn:
+      - loadedKMod: ["my-module"]
+      - pciId:
+          class: ["03"]
+          vendor: ["10de"]
+----
+
+NOTE: On OpenShift, the Node Feature Discovery Operator runs in `openshift-nfd` and generates the worker configuration from the `NodeFeatureDiscovery` resource. Put this configuration in that resource's `spec.workerConfig.configData` field rather than editing the ConfigMap directly, or the operator overwrites it.
+
+==== NFD Best Practices
+
+* Use NFD to automatically label nodes with hardware capabilities
+* Combine NFD labels with resource requests for optimal scheduling
+* Review and filter NFD labels to avoid label bloat
+* Use node affinity with NFD labels for flexible feature matching
+* Monitor NFD worker pods to ensure feature discovery is working correctly
+* Consider using NFD with device plugins for specialized hardware
+
+== Pod Affinity and Anti-Affinity
+
+Pod affinity rules allow you to specify how pods should be placed relative to other pods:
+
+=== Pod Affinity
+
+Pod affinity ensures pods are scheduled near other pods with matching labels:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-pod
+  labels:
+    app: web
+spec:
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+          - key: app
+            operator: In
+            values:
+            - cache
+        topologyKey: kubernetes.io/hostname
+  containers:
+  - name: web
+    image: quay.io/nginx/nginx-unprivileged:latest
+----
+
+This pod will only be scheduled on nodes that have pods with `app=cache` label.
+
+=== Pod Anti-Affinity
+
+Pod anti-affinity ensures pods are not scheduled near other pods with matching labels:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-pod
+  labels:
+    app: web
+spec:
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app
+              operator: In
+              values:
+              - web
+          topologyKey: kubernetes.io/hostname
+  containers:
+  - name: web
+    image: quay.io/nginx/nginx-unprivileged:latest
+----
+
+This configuration prefers spreading pods with `app=web` across different nodes.
+
+=== Topology Spread Constraints
+
+Topology spread constraints provide fine-grained control over how pods are distributed across topology domains (such as nodes, zones, or regions). Unlike pod anti-affinity, topology spread constraints allow you to specify a maximum skew value that defines how uneven the distribution can be.
+
+==== Understanding Skew Values
+
+The `maxSkew` parameter defines the maximum difference in the number of pods between any two topology domains. The minimum allowed value is 1, which gives the most even distribution, while higher values allow for more uneven distribution.
+
+Consider a deployment with 5 replicas across 3 zones:
+
+* **maxSkew: 0**: Not allowed; `maxSkew` must be greater than 0
+* **maxSkew: 1**: Allows one pod difference between zones (2, 2, 1 only)
+* **maxSkew: 2**: Allows two pod difference between zones (3, 1, 1 or 2, 2, 1)
+
+==== Basic Topology Spread Constraint
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: spread-pod
+  labels:
+    app: web
+spec:
+  topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app: web
+  containers:
+  - name: app
+    image: myapp:latest
+----
+
+Key parameters:
+
+* `maxSkew`: Maximum difference in pod count between topology domains
+* `topologyKey`: Node label key that defines topology domains
+* `whenUnsatisfiable`: Action when constraint cannot be satisfied (`DoNotSchedule` or `ScheduleAnyway`)
+* `labelSelector`: Selects which pods to count for skew calculation
+* `nodeTaintsPolicy`: Whether nodes with taints that the pod does not tolerate count as topology domains (`Ignore`, the default) or are left out of the skew calculation (`Honor`)
+
+==== Node-Level Distribution
+
+Spread pods evenly across nodes:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deployment
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        nodeTaintsPolicy: Honor
+        labelSelector:
+          matchLabels:
+            app: web
+      containers:
+      - name: app
+        image: myapp:latest
+----
+
+With 6 replicas and 3 nodes, this ensures each node gets 2 pods (maxSkew: 1 allows only a 2-2-2 distribution; 3-2-1 would have a skew of 2).
+
+`nodeTaintsPolicy: Honor` keeps nodes that the pods cannot run on, such as tainted control-plane nodes, out of the calculation. With the default (`Ignore`), those nodes count as domains with zero pods, so once each schedulable node has one pod, the remaining replicas stay `Pending`.
+
+==== Zone-Level Distribution
+
+Distribute pods across availability zones:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deployment
+spec:
+  replicas: 9
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: web
+      containers:
+      - name: app
+        image: myapp:latest
+----
+
+This distributes 9 replicas across zones with at most 1 pod difference between any two zones (e.g., 3-3-3 across three zones).
+
+==== Multiple Constraints
+
+You can specify multiple topology spread constraints:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deployment
+spec:
+  replicas: 12
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: web
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        nodeTaintsPolicy: Honor
+        labelSelector:
+          matchLabels:
+            app: web
+      containers:
+      - name: app
+        image: myapp:latest
+----
+
+This ensures even distribution both across zones and across nodes within each zone.
+
+==== Impact of Skew Values on Scheduling
+
+The `maxSkew` value directly impacts scheduling behavior:
+
+* **Low skew (1)**: Strict distribution requirements, may prevent scheduling if constraints cannot be met
+* **Medium skew (2-3)**: Balanced distribution with some flexibility
+* **High skew (4+)**: More permissive, allows significant imbalance
+
+Example with 10 replicas and 3 zones:
+
+[source,yaml]
+----
+# maxSkew: 1 - Very strict (4-3-3 only)
+maxSkew: 1
+
+# maxSkew: 2 - Moderate (4-3-3 or 4-4-2)
+maxSkew: 2
+
+# maxSkew: 3 - Permissive (4-4-2 or 5-3-2)
+maxSkew: 3
+----
+
+==== WhenUnsatisfiable Behavior
+
+The `whenUnsatisfiable` field controls what happens when constraints cannot be met:
+
+* **DoNotSchedule**: Pod remains in Pending state if constraint cannot be satisfied
+* **ScheduleAnyway**: Pod is scheduled anyway, but the scheduler still tries to minimize skew
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deployment
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: web
+      containers:
+      - name: app
+        image: myapp:latest
+----
+
+Use `ScheduleAnyway` when you want best-effort distribution but don't want to block scheduling.
+
+==== Combining with Other Constraints
+
+Topology spread constraints work alongside other scheduling constraints:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deployment
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      nodeSelector:
+        disktype: ssd
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        nodeTaintsPolicy: Honor
+        labelSelector:
+          matchLabels:
+            app: web
+      containers:
+      - name: app
+        image: myapp:latest
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+----
+
+The scheduler evaluates all constraints together, ensuring pods are scheduled on nodes that meet all requirements while respecting topology spread.
+
+== Resource Requirements
+
+Resource requests and limits are critical for scheduling decisions:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: resource-pod
+spec:
+  containers:
+  - name: app
+    image: myapp:latest
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "250m"
+      limits:
+        memory: "128Mi"
+        cpu: "500m"
+----
+
+* **Requests**: The scheduler uses these to determine if a node has sufficient resources. The pod is guaranteed at least these resources.
+* **Limits**: The maximum resources a container can use. Exceeding limits may result in throttling or termination.
+
+== Scheduling Failures
+
+When a pod cannot be scheduled, it remains in `Pending` state. Common reasons include:
+
+* Insufficient resources on any node
+* No nodes match node selectors or affinity rules
+* All nodes have taints that the pod cannot tolerate
+* Topology spread constraints cannot be satisfied (when `whenUnsatisfiable: DoNotSchedule`)
+* Specified secondary scheduler is not available or not running
+* Scheduler configuration issues
+
+You can diagnose scheduling issues using:
+
+[source,bash]
+----
+# Check pod events
+oc describe pod <pod-name>
+
+# Check node resources
+oc describe nodes
+
+# Check scheduler logs (cluster administrators only)
+oc logs \
+  -n openshift-kube-scheduler \
+  -l app=openshift-kube-scheduler \
+  -c kube-scheduler
+----
+
+== Best Practices
+
+* Always specify resource requests and limits for predictable scheduling
+* Use priority classes to distinguish critical workloads from best-effort workloads
+* Use Pod Disruption Budgets to protect important workloads from preemption
+* Use node affinity for placement requirements, not node selectors when possible
+* Leverage pod anti-affinity to distribute workloads across nodes
+* Use topology spread constraints with appropriate skew values for fine-grained distribution control
+* Choose skew values based on your availability requirements: lower skew for strict distribution, higher skew for flexibility
+* Use taints and tolerations to reserve nodes for specific workloads
+* Leverage Node Feature Discovery labels to identify nodes with hardware capabilities
+* Use NFD labels with node selectors or affinity rules to schedule workloads on appropriate hardware
+* Monitor scheduling metrics and preemption events to identify bottlenecks
+* Test scheduling constraints and priority configurations in non-production environments first

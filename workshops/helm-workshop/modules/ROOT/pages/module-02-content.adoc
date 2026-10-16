@@ -1,0 +1,182 @@
+= Helm CLI
+:hardbreaks-option:
+
+== Why Learn the Helm CLI?
+
+While Helm is most often used as a client within a GitOps framework and not executed directly in production environments, understanding how to test Helm commands locally will significantly speed up the development process for charts.
+By testing commands locally before committing changes to your GitOps workflow, you can quickly validate chart configurations, catch errors early, and iterate more efficiently on your Helm charts.
+
+== Creating and Deploying Your Chart: A Workflow
+
+Let us walk through the typical workflow of creating a Helm chart, packaging it, pushing it to a registry, and installing it in a cluster.
+This narrative will guide you through the commands you will use at each step.
+
+=== Step 1: Creating Your Chart
+
+First, you create a new Helm chart using the `helm create` command.
+This generates a basic chart structure with sample templates and a `values.yaml` file:
+
+[source,bash]
+----
+helm create my-chart
+----
+
+This command creates a directory called `my-chart` with all the necessary files for a Helm chart.
+You can now customize the templates and values to match your application requirements.
+
+=== Step 2: Testing Your Chart Locally
+
+Before packaging your chart, you should test it to ensure it renders correctly.
+Use the `helm template` command to render your chart templates without installing anything:
+
+[source,bash]
+----
+helm template my-release ./my-chart
+----
+
+This command shows you exactly what Kubernetes resources will be created when you install the chart.
+Review the output to verify that your templates are working as expected.
+
+=== Step 3: Packaging Your Chart
+
+Once you are satisfied with your chart, package it into a `.tgz` archive:
+
+[source,bash]
+----
+helm package ./my-chart
+----
+
+This creates a file named `my-chart-0.1.0.tgz` (assuming version 0.1.0 in your `Chart.yaml`).
+The packaged chart is now ready to be distributed.
+
+=== Step 4: Choosing a Registry
+
+You need an OCI registry that you can push charts to.
+If you do not have one, start a local registry with Podman or Docker on your workstation:
+
+[source,bash]
+----
+podman run -d --replace \
+  --name registry \
+  -p 5000:5000 \
+  quay.io/libpod/registry:2.8.2
+----
+
+The local registry listens on `localhost:5000` and serves plain HTTP without authentication.
+You do not need to log in to it, but every Helm command that talks to it needs the `--plain-http` flag; without it, a push fails (Helm 4 reports `server gave HTTP response to HTTPS client`, Helm 3 reports that the upload `downgrades scheme from https`).
+The steps below use the local registry.
+
+If you use a hosted registry instead (for example Quay.io, or a registry your instructor provides), log in to it first:
+
+[source,bash]
+----
+helm registry login <registry-url>
+----
+
+You will be prompted for your username and password or token.
+Then replace `localhost:5000` with your registry in the steps below, and leave out `--plain-http`.
+
+[NOTE]
+====
+The OpenShift 102 tools pod has no container engine, so it cannot run the local registry.
+From the tools pod, use a registry that your instructor provides.
+====
+
+=== Step 5: Pushing Your Chart
+
+Now you can push your packaged chart to the registry as an OCI artifact:
+
+[source,bash]
+----
+helm push my-chart-0.1.0.tgz oci://localhost:5000/charts \
+  --plain-http
+----
+
+This uploads your chart to the registry where it can be accessed by others or by your GitOps tools.
+
+=== Step 6: Fixing and Pushing Again
+
+If you discover an issue with your chart after pushing it, you can make corrections and push again.
+After updating your chart files, increment the version in `Chart.yaml`, then package and push again:
+
+[source,bash]
+----
+helm package ./my-chart
+----
+
+[source,bash]
+----
+helm push my-chart-0.2.0.tgz oci://localhost:5000/charts \
+  --plain-http
+----
+
+Each version is stored separately in the registry, allowing you to maintain a history of your chart versions.
+
+=== Step 7: Installing Your Chart
+
+With your chart now available in the registry, you can install it in your Kubernetes cluster.
+OCI registries are not added with `helm repo add`; instead, reference the chart directly by its `oci://` URL:
+
+[source,bash]
+----
+helm install my-release oci://localhost:5000/charts/my-chart \
+  --version 0.2.0 \
+  --plain-http
+----
+
+Helm downloads the chart on your workstation and sends only the rendered manifests to the cluster, so the cluster does not need to reach `localhost:5000`.
+
+This command creates a new Helm release named `my-release` using your chart from the registry.
+
+[NOTE]
+====
+On OpenShift, the default `restricted-v2` security context constraint runs pods with a random non-root user ID.
+The `nginx` image that `helm create` puts in `values.yaml` cannot start that way (`mkdir() "/var/cache/nginx/client_temp" failed (13: Permission denied)`), so its pod ends up in `CrashLoopBackOff`.
+To get a running pod, switch the release to the unprivileged NGINX image, which listens on port 8080.
+Because `my-release` already exists, use `helm upgrade --install`; a second `helm install` with the same name fails with `cannot re-use a name that is still in use`:
+
+[source,bash]
+----
+helm upgrade --install my-release \
+  oci://localhost:5000/charts/my-chart \
+  --version 0.2.0 \
+  --plain-http \
+  --set image.repository=quay.io/nginx/nginx-unprivileged \
+  --set image.tag=stable-alpine \
+  --set service.port=8080
+----
+====
+
+=== Step 8: Verifying Your Running Release
+
+After installation, verify that your release is running correctly.
+Check the status of your release:
+
+[source,bash]
+----
+helm status my-release --show-resources
+----
+
+This shows detailed information about the release, including the status of all deployed resources.
+Helm 4 removed the `--show-resources` flag and lists the resources by default, so with Helm 4 run this instead:
+
+[source,bash]
+----
+helm status my-release
+----
+
+You can also list all releases in your namespace:
+
+[source,bash]
+----
+helm list
+----
+
+This displays all Helm releases, their status, and when they were last updated.
+Your `my-release` should appear in this list, confirming that it is installed and running in your cluster.
+
+== Next Steps
+
+Now that you have an overview of the Helm CLI workflow, you will use these commands in the exercises section to explore them in greater detail.
+The exercises will provide hands-on practice with each command, helping you build confidence and familiarity with the Helm CLI as you work through real-world scenarios.
+

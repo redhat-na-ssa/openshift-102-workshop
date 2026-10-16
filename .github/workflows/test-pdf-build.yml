@@ -22,11 +22,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Verify workshop submodules
-        run: ./scripts/verify-submodules.sh
 
       - name: Set up Ruby (Asciidoctor PDF for @antora/pdf-extension)
         uses: ruby/setup-ruby@v1

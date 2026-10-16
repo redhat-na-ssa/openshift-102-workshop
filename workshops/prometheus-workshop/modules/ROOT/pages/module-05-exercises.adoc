@@ -1,0 +1,393 @@
+= Exercises
+:hardbreaks-option:
+
+These exercises require user workload monitoring and the `monitoring-edit` role in your project, which a cluster administrator sets up as described in xref:setup-requirements.adoc[Setup Requirements]. Run the commands in a terminal in which you are logged in to the cluster with `oc login`. Every exercise uses these shell variables; set them again if you open a new terminal:
+
+[source,bash]
+----
+NS=$(oc project -q)
+TOKEN=$(oc whoami -t)
+----
+
+== Exercise 1: Deploy and Scrape the Sample Application
+
+In this exercise, you will deploy `prometheus-example-app` and collect its metrics with a `ServiceMonitor`.
+
+=== Step 1: Deploy the Application
+
+Create the Deployment and the Service:
+
+[source,bash]
+----
+oc apply \
+  -n "$NS" \
+  -f - <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-example-app
+  labels:
+    app: prometheus-example-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus-example-app
+  template:
+    metadata:
+      labels:
+        app: prometheus-example-app
+    spec:
+      containers:
+      - name: prometheus-example-app
+        image: quay.io/brancz/prometheus-example-app:v0.5.0
+        ports:
+        - name: web
+          containerPort: 8080
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-example-app
+  labels:
+    app: prometheus-example-app
+spec:
+  selector:
+    app: prometheus-example-app
+  ports:
+  - name: web
+    port: 8080
+    targetPort: 8080
+EOF
+oc rollout status -n "$NS" deployment/prometheus-example-app
+----
+
+=== Step 2: Create the ServiceMonitor
+
+[source,bash]
+----
+oc apply \
+  -n "$NS" \
+  -f - <<'EOF'
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: prometheus-example-app
+spec:
+  selector:
+    matchLabels:
+      app: prometheus-example-app
+  endpoints:
+  - port: web
+    interval: 30s
+EOF
+----
+
+=== Step 3: Verify That the Target Is Scraped
+
+After about a minute, run this query in *Observe* -> *Metrics* in the *Developer* perspective, with your project selected:
+
+[source,promql]
+----
+up{job="prometheus-example-app"}
+----
+
+The result is one series with the value 1. If there is no result after two minutes, check that the `ServiceMonitor` selects the Service and that the Service port is named `web`. List the Service with:
+
+[source,bash]
+----
+oc get service \
+  -n "$NS" \
+  -l app=prometheus-example-app
+----
+
+=== Step 4: Generate Traffic
+
+Expose the application with a route and send requests to it. Leave the loop running in a separate terminal while you continue:
+
+[source,bash]
+----
+oc expose service prometheus-example-app -n "$NS"
+HOST=$(oc get route prometheus-example-app \
+  -n "$NS" \
+  -o jsonpath='{.spec.host}')
+
+# One successful request per second
+while true; do
+  curl -s -o /dev/null "http://$HOST/"
+  sleep 1
+done
+----
+
+Then query the request rate per status code:
+
+[source,promql]
+----
+sum by (code) (rate(http_requests_total{
+  job="prometheus-example-app"
+}[5m]))
+----
+
+== Exercise 2: Recording Rules
+
+Practice creating recording rules and querying the recorded series.
+
+=== Step 1: Create the PrometheusRule
+
+Create a `PrometheusRule` with the recording rules and alerting rules from the module content:
+
+[source,bash]
+----
+oc apply \
+  -n "$NS" \
+  -f - <<'EOF'
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: prometheus-example-app
+spec:
+  groups:
+  - name: prometheus-example-app.rules
+    rules:
+    - record: namespace_job:http_requests:rate5m
+      expr: sum by (namespace, job) (rate(http_requests_total[5m]))
+    - record: namespace_job:http_requests_errors:ratio_rate5m
+      expr: |
+        sum by (namespace, job) (rate(http_requests_total{code=~"5.."}[5m]))
+          /
+        sum by (namespace, job) (rate(http_requests_total[5m]))
+    - alert: ExampleAppHighErrorRate
+      expr: namespace_job:http_requests_errors:ratio_rate5m{job="prometheus-example-app"} > 0.05
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: High error rate for {{ $labels.job }} in {{ $labels.namespace }}
+        description: '{{ $value | humanizePercentage }} of the requests to {{ $labels.job }} in namespace {{ $labels.namespace }} failed with a 5xx code over the last 5 minutes.'
+    - alert: ExampleAppTargetMissing
+      expr: absent(up{job="prometheus-example-app"})
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: No target for prometheus-example-app in {{ $labels.namespace }}
+        description: 'Prometheus has not scraped any target of the job prometheus-example-app in namespace {{ $labels.namespace }} for at least 1 minute. Check that the pods of the application are running.'
+EOF
+----
+
+=== Step 2: Query the Recorded Request Rate
+
+After a minute, query the recorded series:
+
+[source,promql]
+----
+namespace_job:http_requests:rate5m
+----
+
+Compare it with the expression that the rule records. The values are the same, but the recorded series is cheaper to query, especially over long time ranges:
+
+[source,promql]
+----
+sum by (namespace, job) (rate(http_requests_total[5m]))
+----
+
+=== Step 3: Query the Recorded Error Ratio
+
+[source,promql]
+----
+namespace_job:http_requests_errors:ratio_rate5m
+----
+
+As long as the application has not served any `5xx` response, this query returns no data. Why?
+
+== Exercise 3: Fire an Alert
+
+Practice watching an alert go from inactive to pending to firing.
+
+=== Step 1: Generate Errors
+
+In a second terminal, send requests to `/internal-err`, which always answers with `500 Internal Server Error`. Together with the loop from Exercise 1, about half of the requests now fail:
+
+[source,bash]
+----
+NS=$(oc project -q)
+HOST=$(oc get route prometheus-example-app \
+  -n "$NS" \
+  -o jsonpath='{.spec.host}')
+while true; do
+  curl -s -o /dev/null "http://$HOST/internal-err"
+  sleep 1
+done
+----
+
+=== Step 2: Watch the Error Ratio
+
+Query the error ratio again, as a graph:
+
+[source,promql]
+----
+namespace_job:http_requests_errors:ratio_rate5m{
+  job="prometheus-example-app"
+}
+----
+
+The ratio rises towards 0.5 over the next minutes, because `rate()` averages over a 5-minute window.
+
+=== Step 3: Watch the Alert State
+
+In the *Developer* perspective, navigate to *Observe* and open the *Alerts* tab. `ExampleAppHighErrorRate` is first *Pending*. When the ratio has stayed above 0.05 for 2 minutes, it is *Firing*. Open the alert and read its summary and description, in which the templates have been replaced with the job, the namespace and the current error ratio.
+
+You can also follow the state with a query. The `alertstate` label is `pending` or `firing`:
+
+[source,promql]
+----
+ALERTS{alertname="ExampleAppHighErrorRate"}
+----
+
+Keep the error loop running for Exercises 4 and 5.
+
+== Exercise 4: Query Alerts and Rules Through the API
+
+Practice reading alerts and rules from the Thanos Querier tenancy port 9093.
+
+=== Step 1: Start the API Client Pod
+
+If the `api-client` pod from Module 1 no longer exists in your project, start it again:
+
+[source,bash]
+----
+oc run api-client \
+  -n "$NS" \
+  --restart=Never \
+  --image=registry.access.redhat.com/ubi9/ubi-minimal:latest \
+  --command -- sleep infinity
+
+oc wait \
+  -n "$NS" \
+  --for=condition=Ready \
+  pod/api-client
+----
+
+=== Step 2: List the Active Alerts
+
+[source,bash]
+----
+oc exec -n "$NS" api-client -- curl -sk -G \
+  -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode "namespace=$NS" \
+  https://thanos-querier.openshift-monitoring.svc:9093/api/v1/alerts
+----
+
+Find `ExampleAppHighErrorRate` in the response. Which labels does the alert have? Note the `namespace` label, which OpenShift added to the alert.
+
+=== Step 3: List the Rules
+
+[source,bash]
+----
+oc exec -n "$NS" api-client -- curl -sk -G \
+  -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode "namespace=$NS" \
+  https://thanos-querier.openshift-monitoring.svc:9093/api/v1/rules
+----
+
+Find the two recording rules and the two alerting rules. Compare the `query` of a rule with the expression in your `PrometheusRule`: OpenShift has added the `namespace` matcher to every selector.
+
+== Exercise 5: Silence an Alert
+
+Practice silencing a firing alert.
+
+=== Step 1: Silence the Alert in the Web Console
+
+. In the *Developer* perspective, navigate to *Observe* and open the *Alerts* tab.
+. Open the options menu of `ExampleAppHighErrorRate` and select *Silence alert*.
+. Set the duration to 30 minutes, enter a comment such as `Workshop: testing silences`, and click *Silence*.
+
+The alert is now shown as silenced. It is still firing: the silence only stops the notifications.
+
+=== Step 2: Create a Silence Through the Alertmanager API (Optional)
+
+If you cannot use the *Developer* perspective, you can create the silence through the tenancy port 9092 of the `alertmanager-main` service instead. A silence needs a start time and an end time in UTC; the second `date` command uses GNU `date` syntax. On macOS, use this `date` command for the end time instead:
+
+[source,bash]
+----
+date -u -v+30M +%Y-%m-%dT%H:%M:%SZ
+----
+
+Create the silence:
+
+[source,bash]
+----
+START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+END=$(date -u -d '+30 minutes' +%Y-%m-%dT%H:%M:%SZ)
+
+oc exec -n "$NS" api-client -- curl -sk \
+  -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"matchers\":[{\"name\":\"alertname\",\"value\":\"ExampleAppHighErrorRate\",\"isRegex\":false}],\"startsAt\":\"$START\",\"endsAt\":\"$END\",\"createdBy\":\"$(oc whoami)\",\"comment\":\"Workshop: testing silences\"}" \
+  "https://alertmanager-main.openshift-monitoring.svc:9092/api/v2/silences?namespace=$NS"
+----
+
+The response contains the ID of the new silence. This port is only used when the alerts of user projects go to the platform Alertmanager, which is the default.
+
+=== Step 3: Stop the Errors
+
+Stop the error loop with `Ctrl+C`. After about 5 minutes, the error ratio drops below 0.05 and the alert is resolved. The silence stays until it expires, but has no effect while no alert matches it.
+
+== Exercise 6: Detect a Missing Target
+
+Practice an alert based on `absent()`.
+
+=== Step 1: Scale the Application Down
+
+[source,bash]
+----
+oc scale deployment/prometheus-example-app \
+  -n "$NS" \
+  --replicas=0
+----
+
+=== Step 2: Watch the Alert
+
+Query the expression of the alert:
+
+[source,promql]
+----
+absent(up{job="prometheus-example-app"})
+----
+
+Once Prometheus has removed the target, the query returns one series with the value 1, labeled with `job` and `namespace`. After one more minute, `ExampleAppTargetMissing` fires. Why would an alert on `up{job="prometheus-example-app"} == 0` not fire in this situation?
+
+=== Step 3: Scale the Application Up
+
+[source,bash]
+----
+oc scale deployment/prometheus-example-app \
+  -n "$NS" \
+  --replicas=1
+----
+
+When the new pod has been scraped, the alert is resolved.
+
+Keep the application, the `ServiceMonitor` and the `PrometheusRule`: the next module visualizes their metrics in Grafana. Stop the traffic loop from Exercise 1 with `Ctrl+C` when you no longer need it.
+
+== Verification
+
+After completing these exercises, verify your understanding:
+
+* Can you collect the metrics of an application in your project with a `ServiceMonitor`?
+* Can you write recording rules, and name the recorded series by convention?
+* Can you write alerting rules with `for`, `labels` and `annotations`?
+* Can you explain the difference between a pending and a firing alert?
+* Can you view the alerts and rules of your project in the web console and through the API?
+* Can you silence an alert, and explain what a silence does and does not change?
+
+If you can answer yes to all these questions, you are ready to proceed to the next module on Grafana dashboards.

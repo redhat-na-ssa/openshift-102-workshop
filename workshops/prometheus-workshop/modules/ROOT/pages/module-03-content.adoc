@@ -1,0 +1,432 @@
+= Aggregation Functions
+:hardbreaks-option:
+
+This module covers PromQL aggregation functions, which allow you to summarize data across multiple time series. You will learn how to group metrics, calculate sums, averages, and other statistical functions.
+
+== Understanding Aggregation
+
+Aggregation functions reduce multiple time series into a single time series by grouping them and applying a function (sum, average, max, etc.) to each group.
+
+The examples in this module aggregate the container metrics that cAdvisor reports, using two conventions:
+
+* `container!=""` and `container!="POD"` skip the series that cAdvisor also reports for whole pods, for node-level cgroups and for each pod's pause container. Without them, the same memory or CPU is counted several times.
+* Memory examples use `container_memory_working_set_bytes`, the value that `oc adm top pods` reports. `container_cpu_usage_seconds_total` is a counter of the CPU seconds a container has used since it started, so CPU examples wrap it in `rate(...[5m])` to get the current usage in CPU cores. Module 4 explains `rate()` in detail.
+
+=== Basic Aggregation Syntax
+
+[source,text]
+----
+<aggregation-function>([parameter,] <vector expression>) [without|by (<label list>)]
+----
+
+=== The `by` Clause
+
+The `by` clause specifies which labels to keep when grouping:
+
+[source,promql]
+----
+sum(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+----
+
+This groups all time series by namespace and sums the memory usage for each namespace.
+
+=== The `without` Clause
+
+The `without` clause specifies which labels to remove before grouping:
+
+[source,promql]
+----
+sum(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) without (pod, container, id, image, name)
+----
+
+This removes the `pod` and `container` labels, together with the `id`, `image` and `name` labels that are unique to each container, then sums the remaining groups (one per namespace and node).
+
+== Sum Aggregation
+
+The `sum()` function adds up all values in each group.
+
+=== Basic Sum
+
+[source,promql]
+----
+# Total memory usage across all containers
+sum(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+})
+----
+
+=== Sum by Label
+
+[source,promql]
+----
+# Total memory usage per namespace
+sum(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+
+# Total CPU usage per node
+sum(rate(container_cpu_usage_seconds_total{
+  container!="",
+  container!="POD"
+}[5m])) by (node)
+----
+
+=== Sum with Multiple Labels
+
+[source,promql]
+----
+# Total memory usage per namespace and pod
+sum(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace, pod)
+----
+
+== Average Aggregation
+
+The `avg()` function calculates the average value for each group.
+
+=== Basic Average
+
+[source,promql]
+----
+# Average memory usage across all containers
+avg(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+})
+----
+
+=== Average by Label
+
+[source,promql]
+----
+# Average memory usage per namespace
+avg(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+
+# Average CPU usage per node
+avg(rate(container_cpu_usage_seconds_total{
+  container!="",
+  container!="POD"
+}[5m])) by (node)
+----
+
+== Min and Max Aggregations
+
+The `min()` and `max()` functions find the minimum and maximum values in each group.
+
+=== Minimum Values
+
+[source,promql]
+----
+# Minimum memory usage per namespace
+min(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+----
+
+=== Maximum Values
+
+[source,promql]
+----
+# Maximum memory usage per namespace
+max(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+----
+
+== Count Aggregation
+
+The `count()` function counts the number of time series in each group.
+
+=== Count Time Series
+
+[source,promql]
+----
+# Count of containers per namespace
+count(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+
+# Count of pods per node
+count(kube_pod_info) by (node)
+----
+
+== Statistical Aggregations
+
+PromQL provides several statistical aggregation functions.
+
+=== Standard Deviation
+
+The `stddev()` function calculates the standard deviation:
+
+[source,promql]
+----
+# Standard deviation of memory usage per namespace
+stddev(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+----
+
+=== Variance
+
+The `stdvar()` function calculates the variance:
+
+[source,promql]
+----
+# Variance of memory usage per namespace
+stdvar(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+----
+
+=== Quantiles
+
+The `quantile()` function calculates quantiles over grouped time series:
+
+[source,promql]
+----
+# 95th percentile of memory usage per namespace
+quantile(0.95, container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+
+# 50th percentile (median) of CPU usage per node
+quantile(0.50, rate(container_cpu_usage_seconds_total{
+  container!="",
+  container!="POD"
+}[5m])) by (node)
+----
+
+Common quantile values:
+
+* `0.50` - Median
+* `0.90` - 90th percentile
+* `0.95` - 95th percentile
+* `0.99` - 99th percentile
+
+== Top-K and Bottom-K
+
+The `topk()` and `bottomk()` functions return the top or bottom K time series by value.
+
+=== Top-K
+
+[source,promql]
+----
+# Top 5 containers by memory usage
+topk(5, container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+})
+
+# Top 3 namespaces by total memory usage
+topk(3, sum(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace))
+----
+
+=== Bottom-K
+
+[source,promql]
+----
+# Bottom 5 containers by memory usage
+bottomk(5, container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+})
+
+# Bottom 3 nodes by CPU usage
+bottomk(3, sum(rate(container_cpu_usage_seconds_total{
+  container!="",
+  container!="POD"
+}[5m])) by (node))
+----
+
+== Combining Aggregations
+
+You can combine multiple aggregation functions to create complex queries.
+
+=== Nested Aggregations
+
+[source,promql]
+----
+# Average of maximum memory usage per namespace
+avg(max(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace, pod)) by (namespace)
+----
+
+=== Aggregation with Filtering
+
+[source,promql]
+----
+# Sum of memory usage for OpenShift namespaces only
+sum(container_memory_working_set_bytes{
+  namespace=~"openshift-.*",
+  container!="",
+  container!="POD"
+}) by (namespace)
+----
+
+== Rate Functions with Aggregation
+
+Rate functions are often used with aggregations to calculate rates across multiple time series.
+
+=== Rate and Sum
+
+[source,promql]
+----
+# Total request rate per service
+sum(rate(http_requests_total[5m])) by (service)
+----
+
+=== Rate and Average
+
+[source,promql]
+----
+# Average request rate per namespace
+avg(rate(http_requests_total[5m])) by (namespace)
+----
+
+== Common Aggregation Patterns in OpenShift
+
+=== Total Resource Usage per Namespace
+
+[source,promql]
+----
+# Total CPU usage per namespace
+sum(rate(container_cpu_usage_seconds_total{
+  container!="",
+  container!="POD"
+}[5m])) by (namespace)
+
+# Total memory usage per namespace
+sum(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+----
+
+=== Average Resource Usage per Node
+
+[source,promql]
+----
+# Average CPU usage per node
+avg(rate(container_cpu_usage_seconds_total{
+  container!="",
+  container!="POD"
+}[5m])) by (node)
+
+# Average memory usage per node
+avg(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (node)
+----
+
+=== Pod Count per Namespace
+
+[source,promql]
+----
+# Number of pods per namespace
+count(kube_pod_info) by (namespace)
+----
+
+=== Top Resource Consumers
+
+[source,promql]
+----
+# Top 10 pods by memory usage
+topk(10, sum(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace, pod))
+
+# Top 5 namespaces by total CPU usage
+topk(5, sum(rate(container_cpu_usage_seconds_total{
+  container!="",
+  container!="POD"
+}[5m])) by (namespace))
+----
+
+== Best Practices
+
+=== Choose Appropriate Aggregation
+
+* Use `sum()` for additive metrics (counters, bytes)
+* Use `avg()` for metrics where you want the average
+* Use `max()` or `min()` when you need extremes
+* Use `quantile()` for percentile analysis
+
+=== Group by Meaningful Labels
+
+Group by labels that make sense for your use case:
+
+[source,promql]
+----
+# Good: Group by namespace for resource planning
+sum(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+
+# Less useful: Group by cgroup path
+# (too granular: one series per container instance)
+sum(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (id)
+----
+
+=== Avoid Over-Aggregation
+
+Don't aggregate away information you might need:
+
+[source,promql]
+----
+# Too aggregated: Loses pod-level detail
+sum(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+})
+
+# Better: Keeps namespace detail
+sum(container_memory_working_set_bytes{
+  container!="",
+  container!="POD"
+}) by (namespace)
+----
+
+== Summary
+
+In this module, you learned:
+
+* How aggregation functions work in PromQL
+* Using `by` and `without` clauses for grouping
+* Common aggregation functions: `sum()`, `avg()`, `min()`, `max()`, `count()`
+* Statistical functions: `stddev()`, `stdvar()`, `quantile()`
+* Top-K and bottom-K functions
+* Combining aggregations with rate functions
+* Common aggregation patterns for OpenShift
+* Best practices for effective aggregation
+
+In the next module, you will learn advanced query patterns including rate functions, subqueries, and logical operators.
