@@ -24,6 +24,10 @@ asciidoc:
     extra-cli-tools: "`istioctl`, "
     tools-image-basename: ghcr.io/redhat-na-ssa/openshift-102-workshop-tools
     tools-image-tag: latest
+    # The deployment steps on Workshop instructor: the site image and the chart version,
+    # with fallbacks for builds that aren't from a release.
+    site-image-basename: ghcr.io/redhat-na-ssa/openshift-102-workshop
+    chart-version: "<version>"
     release-version: master
     page-pagination: true
     page-links: []
