@@ -62,7 +62,7 @@ To build one workshop on its own, as it must build before it joins the site:
   --workshop helm
 ----
 
-The generated site substitutes default image coordinates for the *Shared CLI tools* page (`tools-image-basename` and `tools-image-tag` in `default-site.yml`).
+The *Shared CLI tools* page shows the tools image that the Pages and Release workflows pass in, with a fallback for local builds in `content/antora.yml` (`tools-image-basename` and `tools-image-tag`).
 Point them at your registry when building disconnected documentation, for example:
 
 [source,bash]
