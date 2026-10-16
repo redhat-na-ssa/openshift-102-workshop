@@ -61,14 +61,11 @@ git clone <repository-url>
 cd openshift-102-workshop
 ----
 
-[source,bash]
-----
-utilities/lab-build
-----
+Clone https://github.com/shpwrck/workshop-common[workshop-common] next to this repository, then build and serve the site with the same Antora setup as the Pages workflow:
 
 [source,bash]
 ----
-utilities/lab-serve
+../workshop-common/scripts/preview.sh
 ----
 
 Open http://localhost:8080/index.html.
@@ -84,9 +81,11 @@ antora generate default-site.yml --stacktrace \
 
 == Live reload (optional)
 
+Rebuild the site whenever you save a change:
+
 [source,bash]
 ----
-podman-compose up --build
+../workshop-common/scripts/preview.sh --watch
 ----
 
 == GitHub Pages
