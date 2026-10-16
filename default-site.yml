@@ -6,13 +6,6 @@ site:
   url: "https://example.com"
   start_page: ROOT::index.adoc
 
-asciidoc:
-  attributes:
-    # The release's tools image (the Shared CLI tools page shows it); the Release workflow
-    # passes the released name and tag, so override these only for another registry or tag.
-    tools-image-basename: ghcr.io/redhat-na-ssa/openshift-102-workshop-tools
-    tools-image-tag: latest
-
 content:
   sources:
     # Each workshop under workshops/, then the home part, which must stay last.

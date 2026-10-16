@@ -15,8 +15,6 @@ asciidoc:
     # page omits its copy of the shared CLI tools snippet and the PDF shows it once, on the
     # hub's Shared CLI tools page.
     openshift-102-showroom: ~
-    tools-image-basename: ghcr.io/redhat-na-ssa/openshift-102-workshop-tools
-    tools-image-tag: latest
 
 content:
   sources:
