@@ -1,0 +1,13 @@
+// This workshop's pages. Its nav.adoc includes this list when the workshop is built
+// alone, and the site's navigation includes it under Workshop Content, so the list
+// starts at the third level and every xref names this module.
+*** Module 1: Pod Scheduling Fundamentals
+  **** xref:deploy:module-01-content.adoc[Content]
+*** Module 2: Advanced Pod Scheduling
+  **** xref:deploy:module-02-content.adoc[Content]
+  **** xref:deploy:module-02-exercises.adoc[Exercises]
+*** Module 3: Pod Descheduling and Scaling
+  **** xref:deploy:module-03-content.adoc[Content]
+  **** xref:deploy:module-03-exercises.adoc[Exercises]
+*** Module 4: Image Distribution and Optimization
+  **** xref:deploy:module-04-content.adoc[Content]

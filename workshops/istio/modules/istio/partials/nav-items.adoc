@@ -1,0 +1,15 @@
+// This workshop's pages. Its nav.adoc includes this list when the workshop is built
+// alone, and the site's navigation includes it under Workshop Content, so the list
+// starts at the third level and every xref names this module.
+*** Module 1: Overview
+  **** xref:istio:module-01-content.adoc[Content]
+  **** xref:istio:module-01-exercises.adoc[Exercises]
+*** Module 2: Traffic Management
+  **** xref:istio:module-02-content.adoc[Content]
+  **** xref:istio:module-02-exercises.adoc[Exercises]
+*** Module 3: Advanced Traffic Management and Security
+  **** xref:istio:module-03-content.adoc[Content]
+  **** xref:istio:module-03-exercises.adoc[Exercises]
+*** Module 4: Observability
+  **** xref:istio:module-04-content.adoc[Content]
+  **** xref:istio:module-04-exercises.adoc[Exercises]
