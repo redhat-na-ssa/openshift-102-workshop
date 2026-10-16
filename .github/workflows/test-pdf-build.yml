@@ -1,5 +1,5 @@
 name: Test PDF Build
-# Builds the combined workshop PDF (same playbook as the release) on pull requests with the shared workflow in redhat-na-ssa/workshop-common.
+# Builds the combined workshop PDF (same playbook as the release) on pull requests with the shared workflow in shpwrck/workshop-common.
 on:
   pull_request:
     paths:
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   test-build:
-    uses: redhat-na-ssa/workshop-common/.github/workflows/pdf-test.yml@main
+    uses: shpwrck/workshop-common/.github/workflows/pdf-test.yml@main
     with:
       playbook: default-pdf-exports.yml
       output-dir: www-pdf-exports
