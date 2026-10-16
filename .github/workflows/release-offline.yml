@@ -119,7 +119,7 @@ jobs:
           npm install @antora/cli@3.2 @antora/site-generator@3.2 @antora/pdf-extension@1.0.1
           export PATH="${ANTORA32_DIR}/node_modules/.bin:${PATH}"
           cd "${GITHUB_WORKSPACE}"
-          antora generate default-pdf-exports.yml --stacktrace \
+          antora generate default-pdf.yml --stacktrace \
             --attribute tools-image-basename="${TOOLS_IMAGE_BASE}" \
             --attribute tools-image-tag="${TOOLS_IMAGE_TAG}" \
             --attribute revnumber="${TAG}"

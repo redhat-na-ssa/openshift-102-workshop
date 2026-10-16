@@ -1,37 +1,98 @@
 = OpenShift 102 Workshop
 
-Antora showroom site for the OpenShift 102 workshops: Helm, advanced deployment, Istio, and Prometheus.
-All four live in this repository and are published together as one site and one PDF.
+The source of the OpenShift 102 Workshop site: four hands-on workshops (Helm, advanced deployment, Istio service mesh and Prometheus queries) for people who know the basics of Kubernetes and OpenShift, published together as one site and one PDF.
 
-== Workshops
+The site is https://redhat-na-ssa.github.io/openshift-102-workshop/[redhat-na-ssa.github.io/openshift-102-workshop].
+Its xref:content/modules/ROOT/pages/instructor.adoc[Workshop instructor] page is the facilitator guide: what the workshops cover, the environment and requirements, before the day, and delivery notes.
 
-Each workshop is its own Antora component under `workshops/`, so the four keep their own navigation and URLs inside the one site.
-The hub pages (start page and the shared CLI tools page) are in `content/openshift-102/`, together with the site's Antora extensions (`lib/`), which all four workshops share.
-The site's look (theme, CSS, tabs, copy buttons, footer), the PDF look and the Pages and PDF test workflows come from https://github.com/shpwrck/workshop-common[workshop-common], which the other workshop repos share too; change them there.
+This README is for maintainers of the repo.
 
-[cols="1,2,2",options="header"]
+== Layout
+
+The repo is one Antora component made of a home part and nested workshops:
+
+[cols="1,3",options="header"]
 |===
-|Workshop |Source |Instructor setup
+|Folder |What it holds
 
-|Helm
-|`workshops/helm-workshop/`
-|`workshops/helm-workshop/modules/ROOT/pages/setup-requirements.adoc`
+|`content/`
+|The home part: the Workshop home, Workshop instructor and Workshop attendee pages, the Shared CLI tools page and its snippet (`modules/ROOT/partials/cli-tools-container.adoc`), and the site's title, navigation and attributes in `content/antora.yml`.
+`content/lib/dev-mode.js` is an Antora extension that adds a page listing the site and component attributes and puts pages missing from the navigation under *Dev Mode*; turn it on in `default-site.yml` while debugging.
 
-|Advanced deployment
-|`workshops/deploy-workshop/`
-|`workshops/deploy-workshop/modules/ROOT/pages/setup-requirements.adoc`, plus the attendee RBAC in `workshops/deploy-workshop/provisioning/`
+|`workshops/helm/`
+|The Helm Workshop: its pages in `modules/helm/pages`, and its navigation in `modules/helm/nav.adoc`.
 
-|Istio service mesh
-|`workshops/istio-workshop/`
-|`workshops/istio-workshop/modules/ROOT/pages/setup-requirements.adoc`; the Istio and Service Mesh versions are attributes in `workshops/istio-workshop/antora.yml`
+|`workshops/deploy/`
+|The Advanced Deployment Workshop: its pages in `modules/deploy/pages`, its navigation in `modules/deploy/nav.adoc`, and the read-only attendee RBAC its setup requirements apply, in `provisioning/attendee-rbac.yaml`.
 
-|Prometheus queries
-|`workshops/prometheus-workshop/`
-|`workshops/prometheus-workshop/modules/ROOT/pages/setup-requirements.adoc`
+|`workshops/istio/`
+|The Istio Service Mesh Workshop: its pages in `modules/istio/pages`, and its navigation in `modules/istio/nav.adoc`.
+The Istio and Service Mesh versions its pages show are attributes in both `content/antora.yml` and `workshops/istio/antora.yml`; keep them the same.
+
+|`workshops/prometheus/`
+|The Prometheus Query Workshop: its pages in `modules/prometheus/pages`, and its navigation in `modules/prometheus/nav.adoc`.
+
+|`deploy/`, `Dockerfile.runtime`, `Dockerfile.tools`, `image-tools/`, `scripts/`
+|The disconnected release: the runtime and CLI tools images, the Helm chart that deploys the site on OpenShift, and their scripts.
 |===
 
-Each workshop's `antora.yml` names the component (`helm-workshop`, `deploy-workshop`, and so on) and holds its AsciiDoc attributes; `nav.adoc` under `modules/ROOT/` sets its page order.
-The four workshops used to be separate repositories pulled in as Git submodules; they were folded in here so there is one repository to maintain.
+Each workshop's own `antora.yml` is used only when it is built alone; in the full site, `content/antora.yml` supplies the title, navigation and attributes, so an attribute a workshop needs goes in both.
+The workshop pages link to the Shared CLI tools page and include its snippet only when the `openshift-102-showroom` attribute is set, which only `content/antora.yml` does, so each workshop still builds alone.
+
+The site's look (theme, CSS, tabs, copy buttons, footer), the PDF look and the Pages and Check content workflows come from https://github.com/shpwrck/workshop-common[workshop-common], which the other workshop repos share; change them there.
+
+== Preview
+
+Clone https://github.com/shpwrck/workshop-common[workshop-common] next to this repository, and run this from this repository's folder to preview the whole site:
+
+[source,bash]
+----
+../workshop-common/scripts/preview.sh --watch
+----
+
+It builds the site the way the Pages workflow does, serves it on http://localhost:8080/ and rebuilds it when you save a change.
+It needs Node.js and Python 3.
+
+To build one workshop on its own, as it must build before it joins the site:
+
+[source,bash]
+----
+../workshop-common/scripts/preview.sh \
+  --watch \
+  --workshop helm
+----
+
+The generated site substitutes default image coordinates for the *Shared CLI tools* page (`tools-image-basename` and `tools-image-tag` in `default-site.yml`).
+Point them at your registry when building disconnected documentation, for example:
+
+[source,bash]
+----
+antora generate default-site.yml \
+  --stacktrace \
+  --attribute tools-image-basename=ghcr.io/myorg/openshift-102-tools \
+  --attribute tools-image-tag=v1.0.4
+----
+
+Every pull request runs *Check content*, which holds the lines it changes to the formatting conventions and checks that the site, and each workshop on its own, builds without warnings or broken links, and *Test PDF Build*, which builds the release PDF from `default-pdf.yml`.
+A merge to `main` publishes the site.
+
+== Adding a Workshop
+
+Run this from this repository's folder, with a short lowercase name and the workshop's title:
+
+[source,bash]
+----
+../workshop-common/scripts/add-workshop.py \
+  NAME \
+  "Workshop Title"
+----
+
+It creates `workshops/NAME` from the workshop template and lists it in both playbooks, `content/antora.yml`, the home part's navigation, and the home, instructor and attendee pages.
+Then write its pages, its setup requirements, and its row on the instructor page.
+
+== Releases
+
+Push a SemVer tag `v*` (for example `v1.0.4`) or run the *Release disconnected OpenShift bundle* workflow from the Actions tab; see <<disconnected-openshift-air-gap>> for what it publishes.
 
 == Workshop CLI tools image
 
@@ -48,45 +109,6 @@ Included in that image:
 Smoke checks: `bash scripts/verify-tools-image.sh IMAGE:TAG` (also run in CI on release). Offline layout and mirroring notes: `deploy/TOOLS.md`.
 
 Interactive `bash` (for example from the pod **Terminal** tab after running `bash` or `bash -l`) sources `~/.bashrc`, which prints a one-time reminder of the bundled tools for this image.
-
-== Clone and build
-
-[source,bash]
-----
-git clone <repository-url>
-----
-
-[source,bash]
-----
-cd openshift-102-workshop
-----
-
-Clone https://github.com/shpwrck/workshop-common[workshop-common] next to this repository, then build and serve the site with the same Antora setup as the Pages workflow:
-
-[source,bash]
-----
-../workshop-common/scripts/preview.sh
-----
-
-Open http://localhost:8080/index.html.
-
-The generated site substitutes default image coordinates for the **Shared CLI tools** page in the showroom (`tools-image-basename` / `tools-image-tag` in `default-site.yml`). Point them at your registry when building disconnected documentation, for example:
-
-[source,bash]
-----
-antora generate default-site.yml --stacktrace \
-  --attribute tools-image-basename=ghcr.io/myorg/openshift-102-tools \
-  --attribute tools-image-tag=v1.0.4
-----
-
-== Live reload (optional)
-
-Rebuild the site whenever you save a change:
-
-[source,bash]
-----
-../workshop-common/scripts/preview.sh --watch
-----
 
 == GitHub Pages
 
@@ -127,10 +149,11 @@ The chart defaults **`tools.enabled`** to **true**, which starts a second **Depl
 
 The chart **version** follows the Git **release tag** when the workflow runs on a **`v*`** tag (for example tag `v1.0.6` yields chart version **`1.0.6`**). Builds on **`main`** between releases use the SemVer from the latest **`v*`** tag reachable from that commit plus **`+ci.<run number>`** (for example **`1.0.6+ci.4821`**) so each Pages deploy gets a distinct chart while staying aligned with the last release line. Set `image.repository` / `image.tag` to your GHCR showroom image (often the same `v*` as the chart when you cut a release).
 
+[#disconnected-openshift-air-gap]
 == Disconnected OpenShift (air-gap)
 
 * **Helm chart:** `deploy/helm/openshift-102-workshop` — deploys the pre-built static site (UBI httpd runtime, see `Dockerfile.runtime`) and, by default, a **CLI tools** `Deployment` (`tools.enabled`, `Dockerfile.tools`) in the same namespace so learners can use **Terminal** / `oc exec` and run **Helm** from the pod (subject to ServiceAccount RBAC).
 * **SBOM:** CycloneDX JSON is produced in CI for the pushed runtime image (see `.github/workflows/release-offline.yml`).
-* **Release:** Push a SemVer tag `v*` (for example `v1.0.4`) or run the **Release disconnected OpenShift bundle** workflow manually. Each release publishes the Helm package, an offline tarball (`www/` + chart + `DISCONNECTED.md` + `TOOLS.md` + `openshift-102-tools-deployment.yaml` + `images-mirror.txt`), CycloneDX SBOMs for the **showroom** and **CLI tools** images, a single PDF of the hub pages and all four workshops (`openshift-102-workshops-<tag>.pdf`, built from `default-pdf-exports.yml`; the **Test PDF Build** workflow builds it without releasing), and pushes `ghcr.io/<owner>/openshift-102:<tag>` and `ghcr.io/<owner>/openshift-102-tools:<tag>`.
+* **Release:** Push a SemVer tag `v*` (for example `v1.0.4`) or run the **Release disconnected OpenShift bundle** workflow manually. Each release publishes the Helm package, an offline tarball (`www/` + chart + `DISCONNECTED.md` + `TOOLS.md` + `openshift-102-tools-deployment.yaml` + `images-mirror.txt`), CycloneDX SBOMs for the **showroom** and **CLI tools** images, a single PDF of the hub pages and all four workshops (`openshift-102-workshops-<tag>.pdf`, built from `default-pdf.yml`; the **Test PDF Build** workflow builds it without releasing), and pushes `ghcr.io/<owner>/openshift-102:<tag>` and `ghcr.io/<owner>/openshift-102-tools:<tag>`.
 
 Details: `deploy/DISCONNECTED.md`, `deploy/TOOLS.md`.

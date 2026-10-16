@@ -1,0 +1,14 @@
+# Used only when this workshop is built alone (preview.sh --workshop deploy):
+# in the full site, content/antora.yml provides the title, nav and attributes.
+name: ROOT
+title: "Advanced Deployment Workshop"
+version: ~
+nav:
+  - modules/deploy/nav.adoc
+
+asciidoc:
+  attributes:
+    lab_name: "Advanced Deployment Workshop"
+    release-version: master
+    page-pagination: true
+    page-links: []

@@ -1,0 +1,13 @@
+.xref:index.adoc[Istio Service Mesh Workshop]
+* Module 1: Overview
+  ** xref:module-01-content.adoc[Content]
+  ** xref:module-01-exercises.adoc[Exercises]
+* Module 2: Traffic Management
+  ** xref:module-02-content.adoc[Content]
+  ** xref:module-02-exercises.adoc[Exercises]
+* Module 3: Advanced Traffic Management and Security
+  ** xref:module-03-content.adoc[Content]
+  ** xref:module-03-exercises.adoc[Exercises]
+* Module 4: Observability
+  ** xref:module-04-content.adoc[Content]
+  ** xref:module-04-exercises.adoc[Exercises]

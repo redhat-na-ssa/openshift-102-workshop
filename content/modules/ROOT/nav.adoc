@@ -1,0 +1,9 @@
+* xref:index.adoc[Workshop home]
+* xref:instructor.adoc[Workshop instructor]
+** xref:helm:setup-requirements.adoc[Helm Workshop]
+** xref:deploy:setup-requirements.adoc[Advanced Deployment Workshop]
+** xref:istio:setup-requirements.adoc[Istio Service Mesh Workshop]
+** xref:prometheus:setup-requirements.adoc[Prometheus Query Workshop]
+// add-workshop.py adds workshops above this line
+* xref:attendee.adoc[Workshop attendee]
+** xref:cli-tools.adoc[Shared CLI tools]

@@ -5,8 +5,7 @@ on:
     paths:
       - 'content/**'
       - 'workshops/**'
-      - 'lib/**'
-      - 'default-pdf-exports.yml'
+      - 'default-pdf.yml'
       - 'antora-assembler.yml'
       - 'Gemfile'
       - 'Gemfile.lock'
@@ -19,6 +18,6 @@ jobs:
   test-build:
     uses: shpwrck/workshop-common/.github/workflows/pdf-test.yml@main
     with:
-      playbook: default-pdf-exports.yml
+      playbook: default-pdf.yml
       output-dir: www-pdf-exports
       single-pdf: true
