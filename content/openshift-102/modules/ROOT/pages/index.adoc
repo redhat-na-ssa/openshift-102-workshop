@@ -11,7 +11,7 @@ include::partial$cli-tools-container.adoc[]
 
 == Local build
 
-Clone the repository, then generate and serve the site:
+Clone this repository and the shared https://github.com/shpwrck/workshop-common[workshop-common] repository next to each other:
 
 [source,bash]
 ----
@@ -20,17 +20,19 @@ git clone <your-fork-or-repo-url>
 
 [source,bash]
 ----
+git clone https://github.com/shpwrck/workshop-common.git
+----
+
+Then build and serve the site from this repository's folder:
+
+[source,bash]
+----
 cd openshift-102-workshop
 ----
 
 [source,bash]
 ----
-utilities/lab-build
-----
-
-[source,bash]
-----
-utilities/lab-serve
+../workshop-common/scripts/preview.sh
 ----
 
 Browse to http://localhost:8080/index.html and use the left nav to switch between workshops.
