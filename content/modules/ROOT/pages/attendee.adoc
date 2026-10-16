@@ -1,0 +1,21 @@
+= Workshop Attendee
+
+== How the Workshop Works
+
+Each workshop is a set of modules, and most modules have a content page that explains the topic and an exercises page to work through on the cluster.
+Copy each command with the button on its code block and run it as it is, unless the step says to change something.
+
+Before you start, run the verification checklist at the end of the setup requirements for your workshop.
+
+You don't have to install the command-line tools on your laptop: xref:cli-tools.adoc[Shared CLI tools] shows how to run them in a pod on the cluster.
+
+== Workshops
+
+Start with the workshop your instructor names.
+Each start page lists what you should know first and what you can do afterwards.
+
+* xref:helm:index.adoc[Helm Workshop]: create, template and package Helm charts, as files or as OCI artifacts.
+* xref:deploy:index.adoc[Advanced Deployment Workshop]: how pods are scheduled, descheduled and autoscaled, and how images reach the nodes.
+* xref:istio:index.adoc[Istio Service Mesh Workshop]: mutual TLS, traffic management, security policies and observability with OpenShift Service Mesh.
+* xref:prometheus:index.adoc[Prometheus Query Workshop]: PromQL from selectors to aggregations, alerting rules and Grafana dashboards.
+// add-workshop.py adds workshops above this line

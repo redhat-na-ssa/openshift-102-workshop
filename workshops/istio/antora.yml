@@ -1,0 +1,23 @@
+# Used only when this workshop is built alone (preview.sh --workshop istio):
+# in the full site, content/antora.yml provides the title, nav and attributes,
+# so keep the attributes below in step with it.
+name: ROOT
+title: "Istio Service Mesh Workshop"
+version: ~
+nav:
+  - modules/istio/nav.adoc
+
+asciidoc:
+  attributes:
+    lab_name: "Istio Service Mesh Workshop"
+    release-version: master
+    # Istio version of OpenShift Service Mesh 3.4, used in prose and sample URLs
+    istio_version: "1.30"
+    ossm_version: "3.4"
+    # Control plane revision that attendee namespaces are labeled with
+    # (istio.io/rev). See the Setup Requirements page (setup-requirements.adoc).
+    istio_revision: default
+    # Attendee username; Showroom overrides it with the user's lab username
+    user: user1
+    page-pagination: true
+    page-links: []

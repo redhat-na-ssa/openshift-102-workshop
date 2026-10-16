@@ -1,0 +1,57 @@
+---
+# Same content as default-site.yml plus @antora/pdf-extension: one PDF with the hub pages
+# and all the workshops, in nav order, under www-pdf-exports/_exports/ (see
+# antora-assembler.yml). The Release workflow (workshop-common's release.yml) and Test PDF
+# Build use it, and both require exactly one PDF, so keep it to one.
+site:
+  title: OpenShift 102 Workshop
+  url: "https://example.com"
+  start_page: ROOT::index.adoc
+
+asciidoc:
+  attributes:
+    # content/antora.yml sets openshift-102-showroom; ~ (null) unsets it in a way the
+    # component can't override (false would only soft-unset it), so each workshop's start
+    # page omits its copy of the shared CLI tools snippet and the PDF shows it once, on the
+    # hub's Shared CLI tools page.
+    openshift-102-showroom: ~
+    tools-image-basename: ghcr.io/redhat-na-ssa/openshift-102-workshop-tools
+    tools-image-tag: latest
+
+content:
+  sources:
+    # Each workshop under workshops/, then the home part, which must stay last.
+    - url: .
+      start_path: workshops/helm
+    - url: .
+      start_path: workshops/deploy
+    - url: .
+      start_path: workshops/istio
+    - url: .
+      start_path: workshops/prometheus
+    # add-workshop.py adds workshops above this line
+    - url: .
+      start_path: content
+
+ui:
+  bundle:
+    # Showroom theme plus the shared workshop CSS, tabs, copy buttons and footer stamp;
+    # see https://github.com/shpwrck/workshop-common
+    url: https://github.com/shpwrck/workshop-common/releases/download/ui-bundle/ui-bundle.zip
+    snapshot: true
+  supplemental_files:
+    - path: .nojekyll
+    - path: ui.yml
+      contents: "static_files: [ .nojekyll ]"
+
+runtime:
+  cache_dir: ./.cache/antora
+
+antora:
+  extensions:
+    - require: ./content/lib/dev-mode.js
+      enabled: false
+    - "@antora/pdf-extension"
+
+output:
+  dir: ./www-pdf-exports

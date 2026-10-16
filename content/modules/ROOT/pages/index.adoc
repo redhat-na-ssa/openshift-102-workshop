@@ -1,0 +1,30 @@
+= OpenShift 102 Workshop
+
+OpenShift 102 is a set of hands-on workshops for people who know the basics of Kubernetes and the `oc` command line and want to go further on OpenShift.
+By the end, you can package applications with Helm, control where pods run and how they scale, run services in a mesh with Istio, and query and alert on metrics with Prometheus.
+
+== Where to Start
+
+[cols="1,2",options="header"]
+|===
+|You are |Start here
+
+|Running a delivery of the workshop
+|xref:instructor.adoc[Workshop instructor]: what the workshop covers, the environment it needs, and how to run it.
+
+|Taking the workshop
+|xref:attendee.adoc[Workshop attendee]: how the workshop works and where to begin.
+
+|Looking for the command-line tools
+|xref:cli-tools.adoc[Shared CLI tools]: run `oc`, `helm`, `istioctl` and the other tools in a pod on the cluster instead of installing them.
+|===
+
+== Included Workshops
+
+Each one stands on its own; run them in the order listed or pick the ones your group needs.
+
+* xref:helm:index.adoc[Helm Workshop]: create, template and package Helm charts, as files or as OCI artifacts.
+* xref:deploy:index.adoc[Advanced Deployment Workshop]: how pods are scheduled, descheduled and autoscaled, and how images reach the nodes.
+* xref:istio:index.adoc[Istio Service Mesh Workshop]: mutual TLS, traffic management, security policies and observability with OpenShift Service Mesh.
+* xref:prometheus:index.adoc[Prometheus Query Workshop]: PromQL from selectors to aggregations, alerting rules and Grafana dashboards.
+// add-workshop.py adds workshops above this line

@@ -1,12 +1,9 @@
 name: Publish to GitHub Pages
 # Builds and deploys the site with the shared workflow in shpwrck/workshop-common.
-# Tag pushes need the github-pages *environment* to allow refs/tags/v* (or all refs);
-# see README "GitHub Pages" → deployment rules. Otherwise tag deploys fail protection checks.
 on:
   workflow_dispatch:
   push:
     branches: [main]
-    tags: ["v*"]
     paths-ignore:
       - "README.adoc"
       - ".gitignore"
@@ -23,7 +20,3 @@ concurrency:
 jobs:
   pages:
     uses: shpwrck/workshop-common/.github/workflows/pages.yml@main
-    with:
-      helm-version: v3.14.4
-      # serve the Helm chart from the site (www/helm), versioned from the tag or run number
-      post-build: ./scripts/package-helm-into-www.sh .

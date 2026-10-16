@@ -1,0 +1,57 @@
+= Workshop Instructor
+
+This page is for the instructor who runs a delivery of the workshop.
+
+== What the Workshop Covers
+
+Attendees should know the basics of Kubernetes (pods, services, deployments and namespaces), be able to read YAML, and have used the `oc` command line.
+Each workshop's start page lists its own prerequisites and what attendees can do afterwards.
+
+// TODO(Jason): the time each workshop takes; none of the pages or the README state it.
+[cols="2,3,1",options="header"]
+|===
+|Workshop |Covers |Time
+
+|xref:helm:index.adoc[Helm Workshop]
+|The Helm CLI, chart file structure and templating, and storing and distributing charts as files or OCI artifacts. Four modules.
+|
+
+|xref:deploy:index.adoc[Advanced Deployment Workshop]
+|Pod scheduling and priority, node affinity, taints and topology spread, descheduling, horizontal and vertical pod autoscaling, and image distribution. Four modules.
+|
+
+|xref:istio:index.adoc[Istio Service Mesh Workshop]
+|Sidecar injection and mutual TLS, Gateways and VirtualServices, DestinationRules, request authentication and authorization policies, and observability, on OpenShift Service Mesh {ossm_version}. Four modules.
+|
+
+|xref:prometheus:index.adoc[Prometheus Query Workshop]
+|PromQL selectors, aggregation and advanced query patterns, alerting and recording rules with user workload monitoring, and Grafana dashboards. Six modules.
+|
+// add-workshop.py adds workshops above this line
+|===
+
+== Environment and Requirements
+
+Each workshop lists the cluster components, Operators, command-line tools, roles and access it needs on its own page.
+Prepare everything for the workshops you deliver:
+
+* xref:helm:setup-requirements.adoc[Helm Workshop]
+* xref:deploy:setup-requirements.adoc[Advanced Deployment Workshop], including the read-only attendee RBAC in `workshops/deploy/provisioning/attendee-rbac.yaml` in the workshop repository
+* xref:istio:setup-requirements.adoc[Istio Service Mesh Workshop], including the Service Mesh versions and control plane revision the pages show
+* xref:prometheus:setup-requirements.adoc[Prometheus Query Workshop]
+// add-workshop.py adds workshops above this line
+
+Shared by all the workshops: attendees who don't want to install the command-line tools run the workshop CLI tools image on the cluster, as xref:cli-tools.adoc[Shared CLI tools] describes.
+Make sure attendees can pull that image, or mirror it for a disconnected cluster.
+
+== Before the Day
+
+. Prepare the environment from the setup requirements above, for every attendee.
+. Run the workshop end to end once on an environment built the same way.
+. Send attendees the xref:attendee.adoc[Workshop attendee] page so they can check their workstation.
+
+== Delivery Notes
+
+// TODO(Jason): timings, pauses, common mistakes and how to recover from them.
+* Some steps wait for the cluster: the autoscaling exercises in Module 3 of the Advanced Deployment Workshop take a few minutes before the HPA and VPA respond, and so does the outlier ejection in Module 3 of the Istio Service Mesh Workshop.
+* The CLI tools pod has no container engine, so in Module 4 of the Helm Workshop attendees who use it push charts to a registry the pod can reach instead of a local one.

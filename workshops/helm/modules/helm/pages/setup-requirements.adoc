@@ -1,0 +1,281 @@
+= Helm Workshop: Setup Requirements
+
+This page is for the instructor or cluster administrator who prepares an environment for the Helm workshop, and for attendees who want to check their own setup before starting.
+It covers two audiences: the *admin preparation* (the cluster, attendee projects and roles, a registry for charts, and network access), which is done once before the workshop, and the *attendee workstation* (the CLIs each attendee runs), which every attendee needs.
+Most of the workshop runs entirely on the workstation: modules 1 and 3 and most of module 2 only render charts locally with `helm template`, and module 4 works against an OCI registry.
+The cluster is used only where a chart is actually installed (the walkthrough in xref:module-02-content.adoc[Module 2: Helm CLI]).
+
+== Cluster
+
+* *Platform:* any Kubernetes cluster works for the Helm commands, but the content is written for OpenShift 4.
+It relies on the default `restricted-v2` security context constraint (OpenShift 4.11 and later) and explains how to deploy NGINX under it (see xref:module-02-content.adoc#_step_7_installing_your_chart[Step 7 in Module 2]).
+No exact OpenShift version is pinned by the content.
+* *Size and topology:* each attendee installs at most one small release at a time (one NGINX Deployment with one replica, a Service and a ServiceAccount).
+No exercise needs more than one worker node, so a single-node OpenShift (SNO) cluster or a compact three-node cluster is enough; size it for roughly one small pod per attendee.
+* *Cluster features:* none beyond a default installation.
+The exercises do not use the metrics API, user workload monitoring, Routes, Ingress, persistent storage, or any CRDs.
+Helm stores release history as Secrets in the attendee's project, so attendees need to be able to create Secrets there (the `edit` role allows this).
+
+== Operators and Cluster Components
+
+No operators are required, and nothing has to be enabled beyond a default OpenShift installation.
+The table lists the components the content relies on.
+
+[cols="2,3,2,3,2",options="header"]
+|===
+|Component |Install source |Namespace |Configuration needed |Used in
+
+|`restricted-v2` SCC
+|Built in to OpenShift 4.11+; default for pods created by non-admin users
+|Cluster-scoped
+|None. Attendees install the default `helm create` chart with the `nginx-unprivileged` image override shown in Module 2, because the stock `nginx` image cannot start under a random non-root UID.
+|Module 2 (content)
+
+|OCI registry that attendees can push charts to
+|One of: a local registry each attendee starts with Podman or Docker (`quay.io/libpod/registry:2.8.2`, as in Module 4 Exercise 1); an account or organization on a hosted registry such as Quay.io; or a registry the instructor runs and makes reachable from the attendee environment
+|Outside the cluster (local registry), or wherever the instructor hosts it
+|Attendees need push and pull rights. The local registry serves plain HTTP without authentication, so Helm commands need `--plain-http` and `skopeo` needs `--tls-verify=false`. When attendees work from the OpenShift 102 tools pod (which has no container engine), the instructor must provide a registry reachable from that pod.
+|Module 2 (content, `helm push`/`helm install oci://`), Module 4 (Exercise 1)
+
+|cert-manager
+|*Not installed.* The Jetstack chart (`https://charts.jetstack.io`) is only pulled, inspected and rendered with `helm template`; nothing from it is applied to the cluster.
+|-
+|Do not install it for the workshop. It creates cluster-scoped resources (CRDs, ClusterRoles) that attendees with the `edit` role cannot create; on OpenShift, use the cert-manager Operator if you need cert-manager for other reasons.
+|Module 2 (Exercises 1 and 2)
+|===
+
+== Attendee Accounts, Projects and Roles
+
+This repository contains no provisioning automation; the content does not depend on a particular project name.
+Helm installs into the current project of the attendee's `oc` context, so each attendee needs one project of their own, in which they hold the `edit` role (or `admin`, which is what a self-provisioned project gives its creator).
+
+If self-provisioning is enabled (the OpenShift default), attendees create their own project after logging in:
+
+[source,bash]
+----
+oc login <api-url> -u <user>
+oc new-project <user>-helm
+----
+
+If self-provisioning is disabled, the instructor creates one project per attendee and grants `edit` on it:
+
+[source,bash]
+----
+for user in user1 user2 user3; do
+  oc new-project "${user}-helm" --skip-config-write
+  oc adm policy add-role-to-user edit "${user}" -n "${user}-helm"
+done
+----
+
+Attendees then select their project with:
+
+[source,bash]
+----
+oc project <user>-helm
+----
+
+The `edit` role covers everything the content does in the cluster: `helm install`, `helm status --show-resources`, `helm list`, and `helm uninstall` of the default `helm create` chart (Deployment, Service, ServiceAccount, and the Secrets in which Helm stores releases).
+No cluster roles, cluster role bindings, SCC grants, or `anyuid` access are needed; the `nginx-unprivileged` override exists so that the release runs under `restricted-v2`.
+
+Instructor-only:
+
+* Creating projects and role bindings for attendees, when self-provisioning is disabled.
+* Providing the shared OCI registry and its credentials, if attendees do not run a local registry.
+* Anything cluster-scoped. Installing the cert-manager chart (rather than rendering it) would require cluster-admin and is not part of the workshop.
+
+== Attendee Workstation
+
+Exercises show each command for both PowerShell (Windows) and bash (Linux, macOS, or Git Bash).
+
+[cols="2,2,4",options="header"]
+|===
+|Tool |Version |Where it is used
+
+|`helm`
+|Helm 3; tested with 3.16 and 3.22. OCI support needs 3.8 or later, and the `--plain-http` flag used with the local registry needs 3.13 or later. Helm 4.2 also runs every exercise; the only difference that matters is that `helm status` has no `--show-resources` flag (Helm 4 shows resources by default), which Module 2 notes.
+|Every module: `helm create`, `template`, `repo`, `pull`, `show`, `package`, `push`, `install`, `status`, `list`, `env`, `completion`, `dependency update`, `registry login`
+
+|`oc` (or `kubectl`)
+|A client matching the cluster version
+|Logging in and selecting a project, so that `helm install` in Module 2 has a kubeconfig context. Helm reads the same kubeconfig.
+
+|`podman` or `docker`
+|Any current version
+|Module 2 (content, Step 4) and Module 4 Exercise 1: starting the local registry (`podman run ... quay.io/libpod/registry:2.8.2`) and, in Module 4, `docker manifest inspect` on the chart artifact
+
+|`skopeo`
+|Any current version (not available for Windows)
+|Module 4 Exercise 1, Steps 4 to 6: inspecting the chart artifact's manifest, config and layers. With Podman, `skopeo` replaces `docker manifest inspect`; `helm show chart` is the fallback without it.
+
+|`jq`
+|Any version
+|Module 4 Exercise 1, Step 6 (bash): `jq .layers`. PowerShell uses `ConvertFrom-Json` instead.
+
+|`gpg` (GnuPG)
+|2.1 or later (the content shows the keyring export that GnuPG 2.1+ requires)
+|Module 4 content: signing (`helm package --sign`) and verifying (`helm verify`) a chart. There is no signing exercise, so this is needed only to follow along with the content.
+
+|bash 4+ or PowerShell
+|-
+|Module 2 Exercise 0: shell completion (`helm completion bash` or `helm completion powershell`)
+
+|`grep`, `find`, a text editor (`vi`, `nano`, VS Code, or Notepad)
+|-
+|Filtering `helm template` output and editing `Chart.yaml`, `values.yaml` and templates in Modules 2 and 3
+|===
+
+ifdef::openshift-102-showroom[]
+When this workshop runs as part of OpenShift 102, attendees can use its tools pod (see xref:ROOT:cli-tools.adoc[Shared CLI tools]) instead of installing the CLIs locally.
+endif::[]
+ifndef::openshift-102-showroom[]
+When this workshop runs as part of OpenShift 102, attendees can use its tools pod instead of installing the CLIs locally.
+endif::[]
+According to Module 4, the tools pod has `skopeo` installed, and `docker` there is a shim over `skopeo` that supports `docker manifest inspect`; it has *no container engine*, so it cannot start the local registry, and attendees must push to a registry reachable from the pod instead.
+The tools pod also has `jq` and `gpg`; check with the commands in the <<_verification_checklist,Verification Checklist>>.
+
+== Network and Image Access
+
+Container images:
+
+[cols="3,2,3",options="header"]
+|===
+|Image |Pulled by |Used in
+
+|`quay.io/nginx/nginx-unprivileged:stable-alpine`
+|Cluster nodes
+|Module 2 (content): installing the default chart under `restricted-v2`
+
+|`nginx:1.16.0` (Docker Hub, `docker.io/library/nginx`, referenced by the unqualified name `nginx`)
+|Cluster nodes, only if a chart from `helm create` is installed without the image override
+|Default `image.repository` of `helm create` charts; the tag defaults to the chart's `appVersion` (`1.16.0`). On OpenShift this pod crash-loops anyway, so the override is recommended.
+
+|`busybox` (Docker Hub)
+|Cluster nodes, only if an attendee runs `helm test`
+|The `test-connection` pod of `helm create` charts. No step runs `helm test`.
+
+|`quay.io/libpod/registry:2.8.2`
+|The attendee workstation (Podman or Docker)
+|Module 4 Exercise 1: local OCI registry
+|===
+
+The cert-manager chart references images under `quay.io/jetstack/`, but the exercises only render it, so those images are never pulled.
+
+External URLs fetched by the exercises:
+
+* `https://charts.jetstack.io`: Helm repository index and the `cert-manager` chart package (Module 2, Exercises 1 and 2: `helm repo add`, `helm repo update`, `helm pull`, `helm show`, `helm template`).
+* The OCI registry attendees push to (Module 2 content, Module 4): `localhost:5000` for the local registry, or the registry the instructor provides.
+* `+https://helm.sh/docs/...+`: documentation links, opened in a browser only.
+
+For disconnected or restricted-egress environments:
+
+* Mirror `quay.io/nginx/nginx-unprivileged:stable-alpine` into a registry the cluster can pull from, and tell attendees to use the mirrored name in the `--set image.repository=...` override.
+* Make the cert-manager chart available from a reachable location: an internal HTTP chart repository (serve the chart `.tgz` and an `index.yaml`, then replace `https://charts.jetstack.io` in the `helm repo add` commands), or allow egress from attendee workstations or the tools pod to `charts.jetstack.io`.
+* Mirror `quay.io/libpod/registry:2.8.2` for workstations that cannot reach Quay.io, or provide a shared OCI registry instead of the local one.
+* `nginx` and `busybox` from Docker Hub are needed only if attendees skip the image override or run `helm test`.
+
+== Verification Checklist
+
+Run these as an attendee (or as the instructor, logged in as a test attendee) from the workstation or tools pod that attendees will use.
+
+. Helm is installed and is version 3:
++
+[source,bash]
+----
+helm version --short
+----
++
+Expected: `v3.x.y` (tested with v3.16 and v3.22).
+
+. The attendee is logged in and has a project:
++
+[source,bash]
+----
+oc whoami
+oc project -q
+----
++
+Expected: the attendee's user name and their project (for example, `user1-helm`).
+
+. The attendee can create what a Helm release needs in that project:
++
+[source,bash]
+----
+for r in deployments services serviceaccounts secrets; do
+  oc auth can-i create "$r"
+done
+----
++
+Expected: `yes` four times.
+
+. The Jetstack repository is reachable:
++
+[source,bash]
+----
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+helm show chart jetstack/cert-manager
+----
++
+Expected: chart metadata with `name: cert-manager`.
+
+. A chart installs and runs under `restricted-v2`:
++
+[source,bash]
+----
+helm create smoke-chart
+helm install smoke ./smoke-chart \
+  --set image.repository=quay.io/nginx/nginx-unprivileged \
+  --set image.tag=stable-alpine \
+  --set service.port=8080 \
+  --wait \
+  --timeout 3m
+helm status smoke
+helm uninstall smoke
+rm -rf smoke-chart
+----
++
+Expected: `STATUS: deployed` from `helm status`, then `release "smoke" uninstalled`.
+
+. A chart can be pushed to and pulled from the OCI registry.
+With the local registry (workstation with Podman or Docker):
++
+[source,bash]
+----
+podman run -d --replace \
+  --name registry \
+  -p 5000:5000 \
+  quay.io/libpod/registry:2.8.2
+helm create oci-check
+helm package ./oci-check
+helm push oci-check-0.1.0.tgz oci://localhost:5000/charts --plain-http
+helm show chart oci://localhost:5000/charts/oci-check \
+  --version 0.1.0 \
+  --plain-http
+----
++
+Expected: `Pushed: localhost:5000/charts/oci-check:0.1.0` and the chart metadata.
+With a shared registry, first run:
++
+[source,bash]
+----
+helm registry login <registry-url>
+----
++
+Then use `oci://<registry-url>/charts` without `--plain-http`.
+Remove the local registry afterwards if attendees will start it themselves:
++
+[source,bash]
+----
+podman rm -f registry
+----
+
+. The optional tools for Module 4 are present:
++
+[source,bash]
+----
+skopeo --version
+jq --version
+gpg --version | head -1
+----
++
+Expected: a version line from each; `gpg` reports 2.1 or later.

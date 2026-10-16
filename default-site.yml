@@ -4,29 +4,29 @@ site:
   # Served at the root of the runtime image's route; the Pages workflow passes
   # --url with the GitHub Pages address (https://redhat-na-ssa.github.io/openshift-102-workshop).
   url: "https://example.com"
-  start_page: master@openshift-102:ROOT:index.adoc
+  start_page: ROOT::index.adoc
 
 asciidoc:
   attributes:
-    # Set only in the site playbook; default-pdf-exports.yml leaves it unset so the PDF
-    # shows the shared CLI tools snippet once, on the hub pages.
-    openshift-102-showroom: true
-    # Workshop tools image (Dockerfile.tools); override when building for another registry or tag.
-    tools-image-basename: ghcr.io/redhat-na-ssa/openshift-102-tools
+    # The release's tools image (the Shared CLI tools page shows it); the Release workflow
+    # passes the released name and tag, so override these only for another registry or tag.
+    tools-image-basename: ghcr.io/redhat-na-ssa/openshift-102-workshop-tools
     tools-image-tag: latest
 
 content:
   sources:
+    # Each workshop under workshops/, then the home part, which must stay last.
     - url: .
-      start_path: content/openshift-102
+      start_path: workshops/helm
     - url: .
-      start_path: workshops/helm-workshop
+      start_path: workshops/deploy
     - url: .
-      start_path: workshops/deploy-workshop
+      start_path: workshops/istio
     - url: .
-      start_path: workshops/istio-workshop
+      start_path: workshops/prometheus
+    # add-workshop.py adds workshops above this line
     - url: .
-      start_path: workshops/prometheus-workshop
+      start_path: content
 
 ui:
   bundle:
@@ -44,7 +44,7 @@ runtime:
 
 antora:
   extensions:
-    - require: ./content/openshift-102/lib/dev-mode.js
+    - require: ./content/lib/dev-mode.js
       enabled: false
 
 output:

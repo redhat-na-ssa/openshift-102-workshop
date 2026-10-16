@@ -1,0 +1,34 @@
+# The site's home part. Every workshop under workshops/ belongs to this same component
+# (name ROOT, no version), so one navigation spans all of them. The playbooks list this
+# folder last, which makes this file's title, nav and attributes the ones the site uses;
+# a workshop's own antora.yml only applies when it is built alone.
+name: ROOT
+title: "OpenShift 102 Workshop"
+version: ~
+nav:
+  - modules/ROOT/nav.adoc
+  - modules/helm/nav.adoc
+  - modules/deploy/nav.adoc
+  - modules/istio/nav.adoc
+  - modules/prometheus/nav.adoc
+  # add-workshop.py adds workshops above this line
+
+asciidoc:
+  attributes:
+    lab_name: "OpenShift 102 Workshop"
+    release-version: master
+    page-pagination: true
+    page-links: []
+    # Turns on the workshop pages' links to the shared CLI tools page and snippet (ROOT
+    # module), which only exist in the full site; a workshop built alone leaves it unset.
+    # default-pdf.yml unsets it so the PDF shows the snippet once, on the hub's page.
+    openshift-102-showroom: true
+    # Used by the Istio workshop (workshops/istio/antora.yml has the same values).
+    # Istio version of OpenShift Service Mesh 3.4, used in prose and sample URLs
+    istio_version: "1.30"
+    ossm_version: "3.4"
+    # Control plane revision that attendee namespaces are labeled with
+    # (istio.io/rev). See the Istio workshop's Setup Requirements page.
+    istio_revision: default
+    # Attendee username; Showroom overrides it with the user's lab username
+    user: user1
