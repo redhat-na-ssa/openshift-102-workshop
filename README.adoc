@@ -6,7 +6,8 @@ All four live in this repository and are published together as one site and one 
 == Workshops
 
 Each workshop is its own Antora component under `workshops/`, so the four keep their own navigation and URLs inside the one site.
-The hub pages (start page and the shared CLI tools page) are in `content/openshift-102/`, together with the site's Antora extensions (`lib/`) and UI overrides (`supplemental-ui/`), which all four workshops share.
+The hub pages (start page and the shared CLI tools page) are in `content/openshift-102/`, together with the site's Antora extensions (`lib/`), which all four workshops share.
+The site's look (theme, CSS, tabs, copy buttons, footer) and the Pages and PDF test workflows come from https://github.com/redhat-na-ssa/workshop-common[workshop-common], which the other workshop repos share too; change them there.
 
 [cols="1,2,2",options="header"]
 |===
@@ -90,7 +91,7 @@ podman-compose up --build
 
 == GitHub Pages
 
-The workflow in `.github/workflows/gh-pages.yml` publishes the `www/` output from `antora generate default-site.yml` and stamps the page footer with the release, commit and build time.
+The workflow in `.github/workflows/gh-pages.yml` runs the shared Pages workflow from https://github.com/redhat-na-ssa/workshop-common[workshop-common], which publishes the `www/` output from `antora generate default-site.yml` and stamps the page footer with the release, commit, shared setup version and build time.
 It builds the site for the URL GitHub Pages reports, so it works at `https://<owner>.github.io/<repo>/` or on a custom domain.
 
 Each run also packages the Helm chart under **`helm/`** on the same site and writes **`helm/index.yaml`**, so GitHub Pages doubles as a **live Helm chart repository** (no OCI needed for `helm repo add`).
