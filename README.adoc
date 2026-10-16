@@ -94,4 +94,5 @@ Then write its pages, its setup requirements, and its row on the instructor page
 
 Run the *Release* workflow from the Actions tab with the next version, such as `v1.1.0`, or push a tag of that name.
 It publishes the PDF, the runtime and tools images, the Helm chart and an offline bundle; see "Releases" in https://github.com/shpwrck/workshop-common[workshop-common]'s README.
+To ship another file with every release, put it in `downloads/`.
 The tools image adds `istioctl` (`tools/install.sh`) to the shared tools; keep its `ISTIO_VERSION` on the Istio release the pages target, `istio_version` in `content/antora.yml`.

@@ -26,3 +26,6 @@ yarn.lock
 .preview-playbook.yml
 .standalone-*.yml
 .workshop-common/
+
+# Written by scripts/list-downloads.py in the Pages and Release workflows
+content/modules/ROOT/partials/workshop-downloads.adoc
