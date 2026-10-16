@@ -1,12 +1,4 @@
+// The pages are listed in partials/nav-items.adoc, which the full site's
+// navigation also includes, under Workshop Content.
 .xref:index.adoc[Helm Workshop]
-* Module 1: Background and Review
-  ** xref:module-01-content.adoc[Content]
-* Module 2: Helm CLI
-  ** xref:module-02-content.adoc[Content]
-  ** xref:module-02-exercises.adoc[Exercises]
-* Module 3: File Structure and Templating
-  ** xref:module-03-content.adoc[Content]
-  ** xref:module-03-exercises.adoc[Exercises]
-* Module 4: Storage and Distribution of Charts
-  ** xref:module-04-content.adoc[Content]
-  ** xref:module-04-exercises.adoc[Exercises]
+include::partial$nav-items.adoc[]

@@ -1,0 +1,14 @@
+// This workshop's pages. Its nav.adoc includes this list when the workshop is built
+// alone, and the site's navigation includes it under Workshop Content, so the list
+// starts at the third level and every xref names this module.
+*** Module 1: Background and Review
+  **** xref:helm:module-01-content.adoc[Content]
+*** Module 2: Helm CLI
+  **** xref:helm:module-02-content.adoc[Content]
+  **** xref:helm:module-02-exercises.adoc[Exercises]
+*** Module 3: File Structure and Templating
+  **** xref:helm:module-03-content.adoc[Content]
+  **** xref:helm:module-03-exercises.adoc[Exercises]
+*** Module 4: Storage and Distribution of Charts
+  **** xref:helm:module-04-content.adoc[Content]
+  **** xref:helm:module-04-exercises.adoc[Exercises]

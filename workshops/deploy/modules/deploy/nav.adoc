@@ -1,11 +1,4 @@
+// The pages are listed in partials/nav-items.adoc, which the full site's
+// navigation also includes, under Workshop Content.
 .xref:index.adoc[Advanced Deployment Workshop]
-* Module 1: Pod Scheduling Fundamentals
-  ** xref:module-01-content.adoc[Content]
-* Module 2: Advanced Pod Scheduling
-  ** xref:module-02-content.adoc[Content]
-  ** xref:module-02-exercises.adoc[Exercises]
-* Module 3: Pod Descheduling and Scaling
-  ** xref:module-03-content.adoc[Content]
-  ** xref:module-03-exercises.adoc[Exercises]
-* Module 4: Image Distribution and Optimization
-  ** xref:module-04-content.adoc[Content]
+include::partial$nav-items.adoc[]

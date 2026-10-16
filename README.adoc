@@ -3,7 +3,7 @@
 The source of the OpenShift 102 Workshop site: four hands-on workshops (Helm, advanced deployment, Istio service mesh and Prometheus queries) for people who know the basics of Kubernetes and OpenShift, published together as one site and one PDF.
 
 The site is https://redhat-na-ssa.github.io/openshift-102-workshop/[redhat-na-ssa.github.io/openshift-102-workshop].
-Its xref:content/modules/ROOT/pages/instructor.adoc[Workshop instructor] page is the facilitator guide: what the workshops cover, the environment and requirements, before the day, and delivery notes.
+Its xref:content/modules/ROOT/pages/instructor.adoc[Workshop Instructor Guide] page is the facilitator guide: what the workshops cover, the environment and requirements, before the day, and delivery notes.
 
 This README is for maintainers of the repo.
 
@@ -16,21 +16,21 @@ The repo is one Antora component made of a home part and nested workshops:
 |Folder |What it holds
 
 |`content/`
-|The home part: the Workshop home, Workshop instructor and Workshop attendee pages, the Shared CLI tools page and its snippet (`modules/ROOT/partials/cli-tools-container.adoc`), and the site's title, navigation and attributes in `content/antora.yml`.
+|The home part: the Workshop Home, Workshop Instructor Guide and Workshop Attendee Guide pages, the Shared CLI tools page and its snippet (`modules/ROOT/partials/cli-tools-container.adoc`), and the site's title, navigation and attributes in `content/antora.yml`.
 `content/lib/dev-mode.js` is an Antora extension that adds a page listing the site and component attributes and puts pages missing from the navigation under *Dev Mode*; turn it on in `default-site.yml` while debugging.
 
 |`workshops/helm/`
-|The Helm Workshop: its pages in `modules/helm/pages`, and its navigation in `modules/helm/nav.adoc`.
+|The Helm Workshop: its pages in `modules/helm/pages`, and its navigation in `modules/helm/partials/nav-items.adoc`.
 
 |`workshops/deploy/`
-|The Advanced Deployment Workshop: its pages in `modules/deploy/pages`, its navigation in `modules/deploy/nav.adoc`, and the read-only attendee RBAC its setup requirements apply, in `provisioning/attendee-rbac.yaml`.
+|The Advanced Deployment Workshop: its pages in `modules/deploy/pages`, its navigation in `modules/deploy/partials/nav-items.adoc`, and the read-only attendee RBAC its setup requirements apply, in `provisioning/attendee-rbac.yaml`.
 
 |`workshops/istio/`
-|The Istio Service Mesh Workshop: its pages in `modules/istio/pages`, and its navigation in `modules/istio/nav.adoc`.
+|The Istio Service Mesh Workshop: its pages in `modules/istio/pages`, and its navigation in `modules/istio/partials/nav-items.adoc`.
 The Istio and Service Mesh versions its pages show are attributes in both `content/antora.yml` and `workshops/istio/antora.yml`; keep them the same.
 
 |`workshops/prometheus/`
-|The Prometheus Query Workshop: its pages in `modules/prometheus/pages`, and its navigation in `modules/prometheus/nav.adoc`.
+|The Prometheus Query Workshop: its pages in `modules/prometheus/pages`, and its navigation in `modules/prometheus/partials/nav-items.adoc`.
 
 |`tools/`
 |`install.sh` adds `istioctl` to the release's tools image, and `extra-tools` lists it so the image's banner and check include it.
@@ -87,7 +87,7 @@ Run this from this repository's folder, with a short lowercase name and the work
   "Workshop Title"
 ----
 
-It creates `workshops/NAME` from the workshop template and lists it in both playbooks, `content/antora.yml`, the home part's navigation, and the home, instructor and attendee pages.
+It creates `workshops/NAME` from the workshop template and lists it in both playbooks, the home part's navigation, and the home, instructor and attendee pages.
 Then write its pages, its setup requirements, and its row on the instructor page.
 
 == Releases

@@ -1,0 +1,20 @@
+// This workshop's pages. Its nav.adoc includes this list when the workshop is built
+// alone, and the site's navigation includes it under Workshop Content, so the list
+// starts at the third level and every xref names this module.
+*** Module 1: Prometheus Query Language Fundamentals
+  **** xref:prometheus:module-01-content.adoc[Content]
+*** Module 2: Selectors and Filtering
+  **** xref:prometheus:module-02-content.adoc[Content]
+  **** xref:prometheus:module-02-exercises.adoc[Exercises]
+*** Module 3: Aggregation Functions
+  **** xref:prometheus:module-03-content.adoc[Content]
+  **** xref:prometheus:module-03-exercises.adoc[Exercises]
+*** Module 4: Advanced Query Patterns
+  **** xref:prometheus:module-04-content.adoc[Content]
+  **** xref:prometheus:module-04-exercises.adoc[Exercises]
+*** Module 5: Alerting Rules
+  **** xref:prometheus:module-05-content.adoc[Content]
+  **** xref:prometheus:module-05-exercises.adoc[Exercises]
+*** Module 6: Grafana Dashboards
+  **** xref:prometheus:module-06-content.adoc[Content]
+  **** xref:prometheus:module-06-exercises.adoc[Exercises]

@@ -1,10 +1,20 @@
-* xref:index.adoc[Workshop home]
-* xref:instructor.adoc[Workshop instructor]
+* xref:index.adoc[Workshop Home]
+* xref:instructor.adoc[Workshop Instructor Guide]
 ** xref:downloads.adoc[Downloads]
 ** xref:helm:setup-requirements.adoc[Helm Workshop]
 ** xref:deploy:setup-requirements.adoc[Advanced Deployment Workshop]
 ** xref:istio:setup-requirements.adoc[Istio Service Mesh Workshop]
 ** xref:prometheus:setup-requirements.adoc[Prometheus Query Workshop]
 // add-workshop.py adds workshops above this line
-* xref:attendee.adoc[Workshop attendee]
+* xref:attendee.adoc[Workshop Attendee Guide]
 ** xref:cli-tools.adoc[Shared CLI tools]
+* Workshop Content
+** xref:helm:index.adoc[Helm Workshop]
+include::helm:partial$nav-items.adoc[]
+** xref:deploy:index.adoc[Advanced Deployment Workshop]
+include::deploy:partial$nav-items.adoc[]
+** xref:istio:index.adoc[Istio Service Mesh Workshop]
+include::istio:partial$nav-items.adoc[]
+** xref:prometheus:index.adoc[Prometheus Query Workshop]
+include::prometheus:partial$nav-items.adoc[]
+// add-workshop.py adds workshops above this line
