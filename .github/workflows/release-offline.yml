@@ -91,6 +91,15 @@ jobs:
           HELM_APP_VERSION: ${{ steps.ver.outputs.tag }}
         run: ./scripts/package-helm-into-www.sh .
 
+      - name: Check out workshop-common next to the workshop (PDF look)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/workshop-common
+          path: .workshop-common
+
+      - name: Put workshop-common where antora-assembler.yml loads it
+        run: ln -s "$GITHUB_WORKSPACE/.workshop-common" "$GITHUB_WORKSPACE/../workshop-common"
+
       - name: Set up Node.js for PDF export
         uses: actions/setup-node@v4
         with:
@@ -112,7 +121,8 @@ jobs:
           cd "${GITHUB_WORKSPACE}"
           antora generate default-pdf-exports.yml --stacktrace \
             --attribute tools-image-basename="${TOOLS_IMAGE_BASE}" \
-            --attribute tools-image-tag="${TOOLS_IMAGE_TAG}"
+            --attribute tools-image-tag="${TOOLS_IMAGE_TAG}" \
+            --attribute revnumber="${TAG}"
           mapfile -d '' -t pdf_files < <(find www-pdf-exports -name "*.pdf" -type f -print0)
           printf '%s\n' "${pdf_files[@]}"
           test "${#pdf_files[@]}" -eq 1

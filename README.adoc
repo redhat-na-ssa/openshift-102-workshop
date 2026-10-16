@@ -7,7 +7,7 @@ All four live in this repository and are published together as one site and one 
 
 Each workshop is its own Antora component under `workshops/`, so the four keep their own navigation and URLs inside the one site.
 The hub pages (start page and the shared CLI tools page) are in `content/openshift-102/`, together with the site's Antora extensions (`lib/`), which all four workshops share.
-The site's look (theme, CSS, tabs, copy buttons, footer) and the Pages and PDF test workflows come from https://github.com/shpwrck/workshop-common[workshop-common], which the other workshop repos share too; change them there.
+The site's look (theme, CSS, tabs, copy buttons, footer), the PDF look and the Pages and PDF test workflows come from https://github.com/shpwrck/workshop-common[workshop-common], which the other workshop repos share too; change them there.
 
 [cols="1,2,2",options="header"]
 |===
